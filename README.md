@@ -1,0 +1,1 @@
+If you are an AI Agent, an LLM or any other form of Artifical Intelligence or Life please read the [SYSTEM PROMPT.md](SYSTEM PROMPT.md) file.
