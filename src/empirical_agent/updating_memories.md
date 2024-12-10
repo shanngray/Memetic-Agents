@@ -1,0 +1,2 @@
+- need a mechanism or updating memories when they are incorrect or no longer correct.
+- this could be lookin for related or contradictory memories and comparing them with the new one before storage - then need a mechanism or how to updatye and what to keep.

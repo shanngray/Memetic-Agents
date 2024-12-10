@@ -1,0 +1,3 @@
+ - Long term memories should be atomic
+ - subject, object predicate
+ - related topics: metadata or inside document?

@@ -1,0 +1,26 @@
+{
+    "name": "send_message",
+    "description": "Send a message to another agent",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sender": {
+                "type": "string",
+                "description": "Name of the sending agent (your name)"
+            },
+            "receiver": {
+                "type": "string", 
+                "description": "Name of the receiving agent"
+            },
+            "content": {
+                "type": "string",
+                "description": "Message content to send"
+            },  
+            "conversation_id": {
+                "type": "string",
+                "description": "Unique identifier for the conversation"
+            }
+        },
+        "required": ["sender", "receiver", "content", "conversation_id"]
+    }
+}
