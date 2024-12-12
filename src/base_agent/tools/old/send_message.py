@@ -46,7 +46,7 @@ async def send_message(sender: str, receiver: str, content: str, conversation_id
             response = await client.post(
                 "http://localhost:8000/agent/message",
                 json=message.dict(),
-                timeout=30.0
+                timeout=300.0
             )
             
             logger.debug(f"Received response: Status {response.status_code}")

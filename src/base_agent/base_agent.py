@@ -55,6 +55,12 @@ class BaseAgent:
         self.request_queue: asyncio.Queue = asyncio.Queue()
         self.waiting_for: Optional[str] = None
         self.tools: Dict[str, Dict[str, Any]] = {}
+        self.old_conversation_list: Dict[str, str] = {}  # Dictionary where key is conversation_id and value is short/long
+        # Example of a conversation entry:
+        # self.conversation_list = {
+        #     "conversation_id_1": "short_term",
+        #     "conversation_id_2": "long_term"
+        # }
 
         # Define a context variable to keep track of the current conversation ID
         self.current_conversation_id = contextvars.ContextVar('current_conversation_id', default=None)
@@ -84,7 +90,9 @@ class BaseAgent:
         if self.config.enabled_tools:
             self._load_tool_definitions()
 
+        #ToDO: check if this is used
         self.conversation_histories: Dict[str, List[Message]] = {}
+        
         self.agent_directory = None  # Will be set during registration
 
         # Initialize memory manager with default collections
@@ -99,21 +107,12 @@ class BaseAgent:
             collection_names=["short_term", "long_term", "feedback"]
         ))
         
-        # Replace single messages list with conversations dict
-        self.conversations: Dict[str, List[Message]] = {}
-        self.default_conversation_id = "default"
-        
-        # Initialize default conversation with system prompt
-        self.conversations[self.default_conversation_id] = [
-            Message(role="system", content=self.config.system_prompt)
-        ]
-        
-        # Initialize conversation state
-        self.friends: Dict[str, Dict[str, Any]] = {}
 
-        # TODO: Turn back on after testing
+        self.conversations: Dict[str, List[Message]] = {}
+
+
         # Load existing memory if available
-        #self._load_memory()
+        self._load_memory()
         
         # Register shutdown handlers
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -363,10 +362,6 @@ class BaseAgent:
             log_event(self.logger, "session.started", 
                       f"Processing message from {sender} in conversation {conversation_id}")
             log_event(self.logger, "message.content", f"Content: {content}", level="DEBUG")
-
-            if conversation_id == "New":
-                conversation_id = str(uuid.uuid4())
-                log_event(self.logger, "session.created", f"Created new conversation: {conversation_id}")
 
             # Set the current conversation ID in the context variable
             token = self.current_conversation_id.set(conversation_id)  # Added to set context
@@ -650,24 +645,6 @@ class BaseAgent:
 
         return response
 
-    async def run_interactive(self) -> None:
-        """Run the agent in interactive mode."""
-        try:
-            while True:
-                user_input = input(f"\n{self.config.agent_name}: How can I help you? (type 'exit' to quit): ")
-                
-                if user_input.lower().strip() in {"no", "end", "quit", "bye", "exit", "goodbye", "done"}:
-                    print(f"\n{self.config.agent_name}: Goodbye! Have a great day!")
-                    break
-                    
-                response = await self.process_message(user_input, sender="user", conversation_id=self.default_conversation_id)  # Ensure conversation_id is passed
-                print(f"\n{self.config.agent_name}: {response}")
-                
-        except KeyboardInterrupt:
-            print("\n\nExiting due to user interrupt...")
-        except Exception as e:
-            print(f"\nAn error occurred: {str(e)}")
-
     # TODO: We might want to get rid of this. Would need to update process_message and would need to make sure that all messages have the sender and receiver fields
     def get_conversation_history(self, agent_name: str) -> List[Message]:
         """Get messages related to a specific agent across all conversations."""
@@ -691,23 +668,28 @@ class BaseAgent:
         queue_size = self.request_queue.qsize()
         queue_position = queue_size + 1
         
-        # Initialize conversation if needed
-        if conversation_id not in self.conversations:
-            log_event(self.logger, "session.created", 
-                     f"Creating new conversation: {conversation_id}")
+        loaded_conversation = self.current_conversation_id.get()
+
+        if conversation_id == loaded_conversation:
+            # We are in the current conversation, so we can proceed with processing the message
+            pass
+        elif conversation_id in self.conversations:
+            # We have a short term conversation, we need to update the current conversation_id
+            self.current_conversation_id.set(conversation_id)
+            pass
+        elif conversation_id in self.old_conversation_list:
+            # We have a long term conversation, so we need to load it into the conversation history and update the current conversation_id
+            self.current_conversation_id.set(conversation_id)
+            self.conversations[conversation_id].append(Message(role="system", content="This is an old conversation, you may have memories in longer_term memory that will help with context."))
+            pass
+        else:
+            # This is a new conversation, we need to update the conversation list and the current conversation_id
+            log_event(self.logger, "session.created", f"Creating new conversation: {conversation_id}")
+            self.current_conversation_id.set(conversation_id)
             self.conversations[conversation_id] = [
                 Message(role="system", content=self.config.system_prompt)
             ]
-
-        # Update friends list
-        current_time = datetime.now().isoformat()
-        if sender not in self.friends or self.friends[sender]["last_contact"] != current_time:
-            log_event(self.logger, "directory.register", 
-                     f"Updating friend record for {sender}")
-            self.friends[sender] = {
-                "name": sender,
-                "last_contact": current_time
-            }
+            pass
 
         # Create request ID and future
         request_id = str(uuid.uuid4())
@@ -862,7 +844,7 @@ class BaseAgent:
                 await client.post(
                     "http://localhost:8000/agent/feedback",
                     json=feedback_message,
-                    timeout=30.0
+                    timeout=300.0
                 )
                 
             log_event(self.logger, "feedback.sent",
@@ -942,49 +924,173 @@ class BaseAgent:
         except Exception as e:
             log_error(self.logger, f"Failed to process received feedback: {str(e)}")
 
-    # TODO: We need to update this to load from the memory store
     def _load_memory(self) -> None:
-        """Load conversation histories and friends from disk."""
+        """Load short term memories into conversations and list of long term memories into old_conversation_list."""
         try:
-            if self.messages_file.exists():
-                with open(self.messages_file) as f:
-                    conversations_data = json.load(f)
-                    self.conversations = {
-                        conv_id: [Message(**msg) for msg in messages]
-                        for conv_id, messages in conversations_data.items()
-                    }
-                self.logger.info(f"Loaded {len(self.conversations)} conversations from memory")
+            # Initialize empty containers
+            self.conversations = {}
+            self.old_conversation_list = {}
             
-            if self.friends_file.exists():
-                with open(self.friends_file) as f:
-                    self.friends = json.load(f)
-                self.logger.info(f"Loaded {len(self.friends)} friends from memory")
+            # Check if short-term collection exists
+            if "short_term" not in self.memory.collections:
+                log_event(self.logger, "memory.init", 
+                         "No short-term memory collection found - starting fresh")
+                return
+            
+            # Part 1: Load conversations from short-term memory
+            short_term_collection = self.memory._get_collection("short_term")
+            results = short_term_collection.get()
+            
+            if not results["documents"]:
+                log_event(self.logger, "memory.init", 
+                         "Short-term memory collection is empty - starting fresh")
+                return
+            
+            # Group results by conversation_id
+            conversation_groups = {}
+            for doc, metadata in zip(results["documents"], results["metadatas"]):
+                conv_id = metadata.get("conversation_id")
+                if conv_id:
+                    if conv_id not in conversation_groups:
+                        conversation_groups[conv_id] = {
+                            "content": [],
+                            "participants": set(),
+                            "timestamps": []
+                        }
+                    conversation_groups[conv_id]["content"].append(doc)
+                    if "participants" in metadata:
+                        conversation_groups[conv_id]["participants"].update(
+                            metadata["participants"].split(",")
+                        )
+                    if "timestamp" in metadata:
+                        conversation_groups[conv_id]["timestamps"].append(metadata["timestamp"])
+
+            # Convert grouped content into conversations
+            for conv_id, group in conversation_groups.items():
+                # Start with system prompt
+                messages = [Message(role="system", content=self.config.system_prompt)]
+                
+                # Combine all content for this conversation
+                combined_content = "\n".join(group["content"])
+                
+                # Parse the combined content into messages
+                try:
+                    # Split content into message chunks and convert to Message objects
+                    message_chunks = combined_content.split("\n")
+                    for chunk in message_chunks:
+                        if chunk.strip():
+                            # Try to parse role and content from chunk
+                            if ": " in chunk:
+                                role, content = chunk.split(": ", 1)
+                                # Convert role to standard format
+                                role = role.lower()
+                                if role not in ["system", "user", "assistant", "tool"]:
+                                    role = "user"
+                            else:
+                                # Default to user role if format is unclear
+                                role = "user"
+                                content = chunk
+                                
+                            messages.append(Message(
+                                role=role,
+                                content=content,
+                                timestamp=min(group["timestamps"]) if group["timestamps"] else datetime.now().isoformat()
+                            ))
+                
+                    self.conversations[conv_id] = messages
+                    log_event(self.logger, "memory.loaded", 
+                             f"Loaded conversation {conv_id} with {len(messages)} messages")
                     
+                except Exception as e:
+                    log_error(self.logger, 
+                             f"Error parsing conversation {conv_id}: {str(e)}")
+                    continue
+
+            # Part 2: Load old conversations list
+            old_conversations_file = self.files_path / "old_conversations.json"
+            if old_conversations_file.exists():
+                try:
+                    with open(old_conversations_file, "r") as f:
+                        self.old_conversation_list = json.load(f)
+                    log_event(self.logger, "memory.loaded", 
+                             f"Loaded {len(self.old_conversation_list)} old conversations")
+                except json.JSONDecodeError as e:
+                    log_error(self.logger, 
+                             f"Error loading old conversations: {str(e)}")
+                    # Initialize empty if file is corrupted
+                    self.old_conversation_list = {}
+            else:
+                # Initialize empty if file doesn't exist
+                self.old_conversation_list = {}
+
         except Exception as e:
-            self.logger.error(f"Error loading memory: {str(e)}")
-            # Continue with empty state if load fails
+            log_error(self.logger, "Failed to load memory", exc_info=e)
+            # Initialize empty containers on error
+            self.conversations = {}
+            self.old_conversation_list = {}
 
     async def _save_memory(self) -> None:
-        """Save all conversations to memory store."""
+        """Save new messages from conversations to memory store."""
         try:
+            # Get the latest timestamp for each conversation from short-term memory
+            short_term = self.memory._get_collection("short_term")
+            latest_timestamps = {}
+            
+            for conversation_id in self.conversations:
+                # Changed from get() with order_by to get() with where clause
+                results = short_term.get(
+                    where={"conversation_id": conversation_id}
+                )
+                
+                # Manually find the latest timestamp from results
+                if results["metadatas"]:
+                    timestamps = [
+                        metadata.get("timestamp") 
+                        for metadata in results["metadatas"] 
+                        if metadata.get("timestamp")
+                    ]
+                    if timestamps:
+                        latest_timestamps[conversation_id] = max(timestamps)
+                    else:
+                        latest_timestamps[conversation_id] = None
+                else:
+                    latest_timestamps[conversation_id] = None
+
+            # Save only new messages for each conversation
             for conversation_id, conversation in self.conversations.items():
+                latest_timestamp = latest_timestamps.get(conversation_id)
+                
+                # Filter messages that are newer than the latest saved timestamp
+                new_messages = []
+                if latest_timestamp:
+                    new_messages = [
+                        msg for msg in conversation 
+                        if msg.role != "system" and msg.timestamp > latest_timestamp
+                    ]
+                else:
+                    # If no previous messages, save all except system message
+                    new_messages = [msg for msg in conversation if msg.role != "system"]
+
+                if not new_messages:
+                    continue
+
+                # Format new messages for storage
                 content = "\n".join([
                     f"{msg.role}: {msg.content}" 
-                    for msg in conversation 
-                    if msg.role != "system"
+                    for msg in new_messages
                 ])
                 
-                # Convert participants list to comma-separated string
+                # Get all participants from new messages
                 participants = set(
                     getattr(msg, 'sender', None) or msg.role 
-                    for msg in conversation
+                    for msg in new_messages
                 )
                 participants_str = ",".join(sorted(participants))
                 
                 metadata = {
                     "conversation_id": conversation_id,
                     "timestamp": datetime.now().isoformat(),
-                    "participants": participants_str  # Now a string instead of a list
+                    "participants": participants_str
                 }
                 
                 try:
@@ -994,8 +1100,9 @@ class BaseAgent:
                         metadata=metadata
                     )
                     log_event(self.logger, "memory.saved", 
-                             f"Saved conversation {conversation_id} to memory")
-                    # Also save memory dump to disk
+                             f"Saved {len(new_messages)} new messages for conversation {conversation_id}")
+                    
+                    # Save memory dump to disk
                     memory_dump_path = self.files_path / f"{self.config.agent_name}_short_term_memory_dump.md"
                     try:
                         with FileLock(f"{memory_dump_path}.lock"):
@@ -1008,10 +1115,11 @@ class BaseAgent:
                                 f.write(content)
                                 f.write("\n---\n")
                         log_event(self.logger, "memory.dumped", 
-                                f"Saved conversation {conversation_id} to disk")
+                                f"Saved new messages for conversation {conversation_id} to disk")
                     except Exception as e:
                         log_error(self.logger,
                                 f"Failed to save conversation {conversation_id} to disk: {str(e)}")
+                    
                 except Exception as e:
                     log_error(self.logger, 
                              f"Failed to save conversation {conversation_id}: {str(e)}")
@@ -1312,6 +1420,8 @@ class BaseAgent:
             deleted_count = 0
             for memory in old_memories:
                 chroma_id = memory["metadata"].get("chroma_id")  # Use the new chroma_id field
+                conversation_id = memory["metadata"].get("conversation_id")
+                self.old_conversation_list[conversation_id] = "placeholder_name"
                 if chroma_id:
                     await self.memory.delete(chroma_id, "short_term")
                     deleted_count += 1

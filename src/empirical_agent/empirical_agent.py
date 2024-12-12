@@ -108,9 +108,9 @@ class EmpiricalAgent(BaseAgent):
 
     async def _update_system_with_reasoning(self) -> None:
         """Update system message with current reasoning module."""
-        if self.default_conversation_id in self.conversations:
+        if self.current_conversation_id in self.conversations:
             system_message = next(
-                (msg for msg in self.conversations[self.default_conversation_id] 
+                (msg for msg in self.conversations[self.current_conversation_id] 
                  if msg.role == "system"),
                 None
             )
@@ -120,7 +120,7 @@ class EmpiricalAgent(BaseAgent):
             if system_message:
                 system_message.content = new_content
             else:
-                self.conversations[self.default_conversation_id].insert(0, Message(
+                self.conversations[self.current_conversation_id].insert(0, Message(
                     role="system",
                     content=new_content
                 ))
@@ -141,16 +141,16 @@ class EmpiricalAgent(BaseAgent):
         self.logger.info(f"System prompt:\n\n {system_prompt}\n\n")
 
         # Update system message in default conversation
-        if self.default_conversation_id in self.conversations:
+        if self.current_conversation_id in self.conversations:
             system_message = next(
-                (msg for msg in self.conversations[self.default_conversation_id] 
+                (msg for msg in self.conversations[self.current_conversation_id] 
                  if msg.role == "system"),
                 None
             )
             if system_message:
                 system_message.content = system_prompt
             else:
-                self.conversations[self.default_conversation_id].insert(0, Message(
+                self.conversations[self.current_conversation_id].insert(0, Message(
                     role="system",
                     content=system_prompt
                 ))

@@ -134,10 +134,10 @@ class FrankenAgent(BaseAgent):
             technique_content = self.techniques[technique_name]
             self.logger.debug(f"Loaded technique content: {technique_content[:100]}...")  # First 100 chars
             
-            # Update system message in default conversation
-            if self.default_conversation_id in self.conversations:
+            # Update system message in current conversation
+            if self.current_conversation_id in self.conversations:
                 system_message = next(
-                    (msg for msg in self.conversations[self.default_conversation_id] 
+                    (msg for msg in self.conversations[self.current_conversation_id] 
                      if msg.role == "system"),
                     None
                 )
@@ -149,7 +149,7 @@ class FrankenAgent(BaseAgent):
                     system_message.content = new_content
                 else:
                     self.logger.debug("Creating new system message")
-                    self.conversations[self.default_conversation_id].insert(0, Message(
+                    self.conversations[self.current_conversation_id].insert(0, Message(
                         role="system",
                         content=new_content
                     ))
@@ -157,8 +157,8 @@ class FrankenAgent(BaseAgent):
                 self.logger.debug(f"System message updated successfully for technique: {technique_name}")
                 return f"Applied {technique_name} technique"
                 
-            self.logger.warning(f"Default conversation not found: {self.default_conversation_id}")
-            return f"Failed to apply technique: default conversation not found"
+                self.logger.warning(f"Current conversation not found: {self.current_conversation_id}")
+            return f"Failed to apply technique: current conversation not found"
             
         self.logger.warning(f"Unknown technique requested: {technique_name}")
         return f"Unknown technique: {technique_name}"
@@ -219,16 +219,16 @@ class FrankenAgent(BaseAgent):
         self.logger.info(f"System prompt:\n\n {system_prompt}\n\n")
 
         # Update system message in default conversation
-        if self.default_conversation_id in self.conversations:
+        if self.current_conversation_id in self.conversations:
             system_message = next(
-                (msg for msg in self.conversations[self.default_conversation_id] 
+                (msg for msg in self.conversations[self.current_conversation_id] 
                  if msg.role == "system"),
                 None
             )
             if system_message:
                 system_message.content = system_prompt
             else:
-                self.conversations[self.default_conversation_id].insert(0, Message(
+                self.conversations[self.current_conversation_id].insert(0, Message(
                     role="system",
                     content=system_prompt
                 ))

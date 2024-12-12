@@ -15,20 +15,18 @@ class MemoryManager:
         self.collections: Dict[str, Collection] = {}
 
     async def initialize(self, collection_names: List[str] = ["short_term", "long_term"]) -> None:
-        """Initialize the ChromaDB memory store with specified collections.
-        
-        Args:
-            collection_names: List of collection names to initialize. 
-                           If None, uses DEFAULT_COLLECTIONS.
-        """
+        """Initialize the ChromaDB memory store with specified collections."""
         try:
             for name in collection_names:
                 collection_name = f"{self.agent_name}_{name}"
+                # Create collection if it doesn't exist
                 self.collections[name] = self.memory_client.get_or_create_collection(
                     name=collection_name,
                     metadata={"description": f"{name} memory store for {self.agent_name}"}
                 )
-                
+                log_event(self.logger, "memory.initialized", 
+                         f"Initialized collection: {collection_name}")
+                         
             log_event(self.logger, "memory.initialized", 
                      f"Initialized {len(self.collections)} memory collections for {self.agent_name}")
                      
@@ -49,10 +47,15 @@ class MemoryManager:
         metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """Store a new memory in specified collection."""
-        if not self.collections:
-            await self.initialize()
-            
         try:
+            # Ensure collections are initialized
+            if not self.collections:
+                await self.initialize()
+                
+            # Ensure specific collection exists
+            if collection_name not in self.collections:
+                await self.initialize([collection_name])
+                
             collection = self._get_collection(collection_name)
             memory_id = str(uuid.uuid4())
             metadata = metadata or {}
@@ -82,23 +85,22 @@ class MemoryManager:
         n_results: int = 5, 
         metadata_filter: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Retrieve relevant memories from specified collections.
-        
-        Args:
-            query: Search query
-            collection_names: Single collection name or list of names. If None, searches all collections.
-            n_results: Maximum number of results per collection
-            metadata_filter: Additional metadata filters
-        """
-        if not self.collections:
-            await self.initialize()
-            
+        """Retrieve relevant memories from specified collections."""
         try:
-            # Normalize collection_names to list
+            # Ensure collections are initialized
+            if not self.collections:
+                await self.initialize()
+                
+            # Normalize collection_names to list and ensure they exist
             if collection_names is None:
                 collection_names = list(self.collections.keys())
             elif isinstance(collection_names, str):
                 collection_names = [collection_names]
+                
+            # Initialize any missing collections
+            missing_collections = [name for name in collection_names if name not in self.collections]
+            if missing_collections:
+                await self.initialize(missing_collections)
                 
             all_memories = []
             for name in collection_names:

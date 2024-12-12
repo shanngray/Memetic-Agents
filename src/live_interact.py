@@ -1,11 +1,17 @@
 import asyncio
 import httpx
 import re
+import uuid
 from datetime import datetime
+from pathlib import Path
 from api_server.models.api_models import APIMessage
 from base_agent.models import AgentStatus
 from icecream import ic
 import os
+from conversation_store import ConversationStore
+
+# Initialize conversation store
+CONVERSATION_STORE = ConversationStore(Path("agent_files/conversations.json"))
 
 async def handle_lookup():
     """Query the directory service for all registered agents."""
@@ -23,6 +29,16 @@ async def handle_lookup():
 
 async def handle_direct_message(agent_name: str, message: str, conversation_id: str):
     """Send a message directly to a specific agent."""
+    if not conversation_id:
+        print("\nNo active conversation. Use /new to start one or /resume <id> to continue an existing one.")
+        return
+        
+    # Update conversation participants if needed
+    conversation = CONVERSATION_STORE.get_conversation(conversation_id)
+    if conversation and agent_name not in conversation["participants"]:
+        participants = conversation["participants"] + [agent_name]
+        CONVERSATION_STORE.update_conversation(conversation_id, participants=participants)
+    
     api_message = APIMessage(
         sender="User",
         receiver=agent_name,
@@ -136,44 +152,115 @@ def handle_clear():
     """Clear the terminal screen."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
+async def handle_new_conversation(new_name="New Conversation"):
+    """Start a new conversation."""
+    conversation_id = str(uuid.uuid4())
+    CONVERSATION_STORE.add_conversation(
+        conversation_id=conversation_id,
+        name=new_name,
+        participants=["User"]  # Initial participant
+    )
+    return conversation_id
+
+async def handle_list_conversations():
+    """List all available conversations."""
+    conversations = CONVERSATION_STORE.list_conversations()
+    if not conversations:
+        print("\nNo conversations found.")
+        return
+    
+    print("\nAvailable Conversations:")
+    for conv in conversations:
+        print(f"\n- ID: {conv['id']}")
+        print(f"  Name: {conv['name']}")
+        print(f"  Participants: {', '.join(conv['participants'])}")
+        print(f"  Messages: {conv['message_count']}")
+        print(f"  Last Active: {conv['last_active']}")
+
+async def handle_rename_conversation(conversation_id: str, new_name: str):
+    """Rename an existing conversation."""
+    CONVERSATION_STORE.update_conversation(conversation_id, name=new_name)
+    print(f"\nRenamed conversation to: {new_name}")
+
 async def live_interact():
     EXIT_COMMANDS = {"exit", "quit", "bye", "goodbye", "/exit", "/quit"}
+    CONVERSATION_COMMANDS = {"/new", "/list", "/resume", "/exit_conv", "/rename"}
     
     print("Starting conversation with Agentic Community (type 'exit' to quit)\n")
     print("Available commands:")
+    print("  /new <name> - Start a new conversation")
+    print("  /list - List available conversations")
+    print("  /resume <id> - Resume existing conversation")
+    print("  /exit_conv - Exit current conversation")
+    print("  /rename <name> - Rename current conversation")
     print("  /lookup - List all available agents")
     print("  @agent_name message - Send direct message to agent")
-    print("  @agent_name/status/new_status - Update agent status\n")
-    print("  /show <collection_name> - Show documents in collection\n")
-    print("  /list_col - List all collections\n")
-    print("  /list_status - List all agent statuses\n")
-    print("  /clear - Clear the screen\n")
+    print("  @agent_name/status/new_status - Update agent status")
+    print("  /show <collection_name> - Show documents in collection")
+    print("  /list_col - List all collections")
+    print("  /list_status - List all agent statuses")
+    print("  /clear - Clear the screen")
     print("  /help - Show this help message\n")
 
-    conversation_id = input("Enter a conversation ID (or 'New'): ")
+    current_conversation_id = None
     
     while True:
-        user_input = input("\nYou: ").strip()
+        # Show conversation context in prompt if in a conversation
+        prompt = f"\nConversation {current_conversation_id[:8]}... > " if current_conversation_id else "\nNo active conversation > "
+        user_input = input(prompt).strip()
         
         # Parse input for different command patterns
         status_pattern = re.match(r"@(\w+)/status/(\w+)", user_input)
         direct_msg_pattern = re.match(r"@(\w+)\s+(.+)", user_input)
+        rename_pattern = re.match(r"/rename\s+(.+)", user_input)
+        resume_pattern = re.match(r"/resume\s+(.+)", user_input)
+        new_pattern = re.match(r"/new(?:\s+(.+))?", user_input)
         
         match user_input:
             case cmd if cmd.lower() in EXIT_COMMANDS:
                 print("Ending conversation. Goodbye!")
                 break
                 
+            case cmd if new_pattern:
+                new_name = new_pattern.group(1)  # Will be None if no name provided
+                current_conversation_id = await handle_new_conversation(new_name)
+                print(f"\nStarted new conversation with ID: {current_conversation_id}")
+                
+            case "/list":
+                await handle_list_conversations()
+                
+            case cmd if resume_pattern:
+                conv_id = resume_pattern.group(1)
+                if CONVERSATION_STORE.get_conversation(conv_id):
+                    current_conversation_id = conv_id
+                    print(f"\nResumed conversation: {conv_id}")
+                else:
+                    print(f"\nConversation not found: {conv_id}")
+                
+            case "/exit_conv":
+                if current_conversation_id:
+                    current_conversation_id = None
+                    print("\nExited conversation")
+                else:
+                    print("\nNo active conversation")
+                
+            case cmd if rename_pattern:
+                if current_conversation_id:
+                    new_name = rename_pattern.group(1)
+                    await handle_rename_conversation(current_conversation_id, new_name)
+                else:
+                    print("\nNo active conversation to rename")
+                
             case "/lookup":
                 await handle_lookup()
                 
             case cmd if status_pattern:
                 agent_name, new_status = status_pattern.groups()
-                await handle_status_update(agent_name, new_status, conversation_id)
+                await handle_status_update(agent_name, new_status, current_conversation_id)
                 
             case cmd if direct_msg_pattern:
                 agent_name, message = direct_msg_pattern.groups()
-                await handle_direct_message(agent_name, message, conversation_id)
+                await handle_direct_message(agent_name, message, current_conversation_id)
                 
             case cmd if cmd.startswith("/show "):
                 collection_name = cmd.split()[1]
@@ -190,6 +277,11 @@ async def live_interact():
                 
             case "/help":
                 print("\nAvailable commands:")
+                print("  /new - Start a new conversation")
+                print("  /list - List available conversations")
+                print("  /resume <id> - Resume existing conversation")
+                print("  /exit_conv - Exit current conversation")
+                print("  /rename <name> - Rename current conversation")
                 print("  /lookup - List all available agents")
                 print("  @agent_name message - Send direct message to agent")
                 print("  @agent_name/status/new_status - Update agent status")
@@ -200,8 +292,14 @@ async def live_interact():
                 print("  /help - Show this help message")
                 
             case _:
-                # Default case - send to default agent
-                await handle_direct_message("Aithor", user_input, conversation_id)
+                if current_conversation_id is None:
+                    print("\nNo active conversation. Use /new to start one or /resume <id> to continue an existing one.")
+                else:
+                    #TODO: need to change this to just continue the conversation if there is an id
+                    # Update conversation state before sending message
+                    CONVERSATION_STORE.increment_message_count(current_conversation_id)
+                    # Send to default agent
+                    await handle_direct_message("Aithor", user_input, current_conversation_id)
 
 if __name__ == "__main__":
     asyncio.run(live_interact())
