@@ -28,10 +28,7 @@ from .config import AgentConfig
 from api_server.models.api_models import APIMessage
 from src.log_config import setup_logger, log_tool_call, log_agent_message, log_error, log_event
 from src.memory.memory_manager import MemoryManager
-
-class ToolError(Exception):
-    """Custom exception for tool-related errors."""
-    pass
+from src.base_agent.tool_manager import ToolManager, ToolError
 
 class BaseAgent:
     def __init__(
@@ -55,6 +52,7 @@ class BaseAgent:
         self.request_queue: asyncio.Queue = asyncio.Queue()
         self.waiting_for: Optional[str] = None
         self.tools: Dict[str, Dict[str, Any]] = {}
+        self.internal_tools: Dict[str, Callable] = {}
         self.old_conversation_list: Dict[str, str] = {}  # Dictionary where key is conversation_id and value is short/long
         # Example of a conversation entry:
         # self.conversation_list = {
@@ -65,9 +63,6 @@ class BaseAgent:
         # Define a context variable to keep track of the current conversation ID
         self.current_conversation_id = contextvars.ContextVar('current_conversation_id', default=None)
         
-        # Initialize internal tools dictionary ONCE at the start
-        self.internal_tools: Dict[str, Callable] = {}
-        
         # Initialize logger before any other operations
         self.logger = setup_logger(
             name=self.config.agent_name,
@@ -77,14 +72,16 @@ class BaseAgent:
         )
         
         self._setup_logging()
+
+        self.tool_mod = ToolManager(self)
         
         # Add send_message to internal tools
         self.internal_tools["send_message"] = self.send_message
         self.internal_tools["search_memory"] = self.search_memory
-        
-        # Register all internal tools AFTER adding them to internal_tools
+
+        # Register all internal tools AFTER adding them to tool_mod.internal
         for tool_name, tool_func in self.internal_tools.items():
-            self.register_tool(tool_func)
+            self.tool_mod.register(tool_func)
             
         # Load enabled external tools
         if self.config.enabled_tools:
@@ -102,6 +99,8 @@ class BaseAgent:
             chroma_client=chroma_client
         )
         
+
+
         # Initialize collections including feedback
         asyncio.create_task(self.memory.initialize(
             collection_names=["short_term", "long_term", "feedback"]
@@ -160,105 +159,10 @@ class BaseAgent:
                 log_event(self.logger, "tool.loading", f"Loading tool definition: {tool_path}")
                 with open(tool_path) as f:
                     tool_def = json.load(f)
-                    self.register_tool(tool_def)
+                    self.tool_mod.register(tool_def)
                     
             except Exception as e:
                 log_event(self.logger, "tool.error", f"Failed to load tool {tool_name}: {str(e)}")
-
-    async def _load_tool(self, tool_name: str) -> Callable:
-        """Load a tool by name, preferring internal tools over external ones.
-        
-        Args:
-            tool_name: Name of the tool to load
-            
-        Returns:
-            Callable: The loaded tool function
-            
-        Raises:
-            ToolError: If tool cannot be loaded
-        """
-        try:
-            # First check for internal tool
-            if tool_name in self.internal_tools:
-                log_event(self.logger, "tool.loading", f"Loading internal tool: {tool_name}", level="DEBUG")
-                return self.internal_tools[tool_name]
-            
-            # Fall back to external tool
-            log_event(self.logger, "tool.loading", f"Loading external tool: {tool_name}", level="DEBUG")
-            if str(self.config.tools_path) not in sys.path:
-                sys.path.append(str(self.config.tools_path))
-            
-            spec = importlib.util.spec_from_file_location(
-                tool_name,
-                str(self.config.tools_path / f"{tool_name}.py")
-            )
-            if not spec or not spec.loader:
-                raise ToolError(f"Could not find tool module: {tool_name}")
-                
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            
-            tool_func = getattr(module, tool_name)
-            log_event(self.logger, "tool.success", f"Successfully loaded external tool: {tool_name}")
-            return tool_func
-                
-        except Exception as e:
-            log_event(self.logger, "tool.error", f"Failed to load tool {tool_name}: {str(e)}")
-            raise ToolError(f"Failed to load tool {tool_name}: {str(e)}")
-
-    async def _execute_tool(self, tool_call: ToolCall) -> Dict[str, Any]:
-        """Execute a tool call and return the result."""
-        await self.set_status(AgentStatus.WAITING)
-        tool_name = tool_call.function["name"]
-        tool_args = tool_call.function["arguments"]
-        
-        log_event(self.logger, "tool.executing", 
-                  f"Starting execution of tool: {tool_name}", level="DEBUG")
-        
-        if tool_name not in self.tools:
-            error_msg = f"Unknown tool: {tool_name}"
-            log_event(self.logger, "tool.error", error_msg, level="ERROR")
-            raise ToolError(error_msg)
-        
-        try:
-            # Load the tool
-            log_event(self.logger, "tool.loading", 
-                     f"Loading tool implementation: {tool_name}", level="DEBUG")
-            tool_func = await self._load_tool(tool_name)
-            
-            # Parse arguments
-            try:
-                args = json.loads(tool_args)
-                log_event(self.logger, "tool.executing", 
-                         f"Parsed arguments for {tool_name}: {args}", level="DEBUG")
-            except json.JSONDecodeError as e:
-                error_msg = f"Invalid tool arguments: {tool_args}"
-                log_event(self.logger, "tool.error", error_msg, level="ERROR")
-                raise ToolError(error_msg) from e
-            
-            # Execute the tool
-            source = "internal" if tool_name in self.internal_tools else "external"
-            log_event(self.logger, "tool.executing", 
-                     f"Executing {source} tool {tool_name} with args: {args}")
-            
-            result = await tool_func(**args)
-            
-            # Log the successful execution and result
-            log_tool_call(self.logger, tool_name, args, result)
-            log_event(self.logger, "tool.success", 
-                     f"Tool {tool_name} executed successfully")
-            
-            return result
-                
-        except ToolError:
-            raise
-        except Exception as e:
-            error_msg = f"Tool execution failed: {str(e)}"
-            log_error(self.logger, error_msg, exc_info=e)
-            raise ToolError(error_msg)
-        finally:
-            if self.status != AgentStatus.SHUTTING_DOWN:
-                await self.set_status(AgentStatus.PROCESSING)
 
     def register_tools(self, tools: List[Dict[str, Any]]) -> None:
         """Register multiple tools/functions that the agent can use.
@@ -270,77 +174,8 @@ class BaseAgent:
             ValueError: If any tool definition is invalid
         """
         for tool in tools:
-            self.register_tool(tool)
+            self.tool_mod.register(tool)
             
-    def register_tool(self, tool: Union[Dict[str, Any], Callable]) -> None:
-        """Register a new tool/function that the agent can use.
-        
-        Args:
-            tool: Either a tool definition dictionary or a callable method
-        """
-        if callable(tool):
-            # Handle internal tool (method)
-            tool_name = tool.__name__
-            if tool_name in self.tools:
-                self.logger.warning(f"External tool {tool_name} will be overridden by internal method")
-            
-            # Get function signature and docstring for parameters
-            sig = inspect.signature(tool)
-            doc = inspect.getdoc(tool) or ""
-            
-            # Create tool definition from method
-            tool_def = {
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "description": doc.split("\n")[0],  # First line of docstring
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            param.name: {"type": "string"}  # Simplified - could be enhanced
-                            for param in sig.parameters.values()
-                        },
-                        "required": [
-                            param.name
-                            for param in sig.parameters.values()
-                            if param.default == inspect.Parameter.empty
-                        ]
-                    }
-                }
-            }
-            
-            self.internal_tools[tool_name] = tool
-            self.tools[tool_name] = tool_def
-            log_event(self.logger, "tool.registered", f"Registered internal tool: {tool_name}")
-            
-        else:
-            # Handle external tool definition (existing logic)
-            if "function" not in tool:
-                tool = {
-                    "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool["description"],
-                        "parameters": tool["parameters"]
-                    }
-                }
-                
-            # Validate tool definition
-            required_fields = {"name", "description", "parameters"}
-            if not all(field in tool["function"] for field in required_fields):
-                raise ValueError(f"Tool definition missing required fields: {required_fields}")
-                
-            tool_name = tool["function"]["name"]
-            if tool_name in self.internal_tools:
-                log_event(self.logger, "tool.warning", 
-                         f"External tool {tool_name} will not override existing internal method")
-                return
-                
-            if tool_name in self.tools:
-                raise ValueError(f"Tool {tool_name} already registered")
-                
-            self.tools[tool_name] = tool
-            log_event(self.logger, "tool.registered", f"Registered external tool: {tool_name}")
 
     def _trim_history(self, conversation_id: str) -> None:
         """Trim conversation history to max_history length."""
@@ -476,7 +311,10 @@ class BaseAgent:
                         for tool_call in tool_calls:
                             tool_iteration_count += 1
                             try:
-                                tool_result = await self._execute_tool(tool_call)
+                                await self.set_status(AgentStatus.WAITING) #change status outside of execute call
+                                tool_result = await self.tool_mod.execute(tool_call)
+                                if self.status != AgentStatus.SHUTTING_DOWN:
+                                    await self.set_status(AgentStatus.PROCESSING)
                                 tool_message = Message(
                                     role="tool",
                                     content=json.dumps(tool_result),

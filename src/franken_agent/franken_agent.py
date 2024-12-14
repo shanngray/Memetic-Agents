@@ -56,7 +56,7 @@ class FrankenAgent(BaseAgent):
             "apply_technique": self.apply_technique,
             "update_system_prompt": self.update_system_prompt
         }.items():
-            self.register_tool(tool_func)
+            self.tool_mod.register(tool_func)
 
         # Update system prompt with technique information
         self._initialize_system_prompt()

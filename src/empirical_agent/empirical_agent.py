@@ -49,7 +49,7 @@ class EmpiricalAgent(BaseAgent):
             "update_reasoning_module": self.update_reasoning_module,
             "update_system_prompt": self.update_system_prompt
         }.items():
-            self.register_tool(tool_func)
+            self.tool_mod.register(tool_func)
 
         # Update system prompt with reasoning module
         self._initialize_system_prompt()

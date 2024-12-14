@@ -67,3 +67,5 @@ poetry.lock
 .cursorignore
 .cursorrules
 .cursorrules_old
+src/base_agent/old_base_agent.py
+src/test/class_logic.py

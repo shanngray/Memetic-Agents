@@ -117,6 +117,8 @@ EVENT_EMOJIS = {
     "tool.registered": "📝",
     "tool.executing": "⚙️",
     "tool.warning": "⚠️",
+    "tool.installed": "🔧",
+    "tool.called": "🔧",
     # Message events
     "message.content": "💬",
     # Memory events
@@ -124,7 +126,7 @@ EVENT_EMOJIS = {
     "memory.saved": "💾",
     "memory.error": "💾❌",
     "memory.cleanup": "🧠🧹",
-    "tool.called": "🔧",
+    "memory.installed": "🧠",
     # Queue events
     "queue.added": "📊➕",
     "queue.dequeued": "📊⬇️",
