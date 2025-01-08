@@ -1,0 +1,23 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://example.com/self-improvement-schema.json",
+    "title": "Output Schema for Self Improvement",
+    "description": "Memetic Agent Output Schema for Self Improvement",
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "The improved prompt."
+        },
+        "thoughts": {
+          "type": "string",
+          "description": "Your thoughts on the prompt and its improvements."
+        }
+      },
+      "required": ["prompt", "thoughts"],
+      "additionalProperties": false
+    }
+  }
+  

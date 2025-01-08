@@ -5,7 +5,9 @@ from typing import List, Dict, Optional
 
 class ConversationStore:
     def __init__(self, file_path: Path):
-        """Initialize the conversation store with a path to the JSON storage file."""
+        """Initialize the conversation store used by Live Interact CLI.
+        This is a simple JSON file that stores conversations and their details.
+        """
         self.file_path = file_path
         self.conversations: Dict[str, Dict] = {}
         self.load()

@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional, Set
-from enum import Enum
+from enum import Enum, IntEnum
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -52,27 +52,36 @@ class Message(BaseModel):
             result["timestamp"] = self.timestamp
         return result
 
-class AgentStatus(Enum):
-    IDLE = "idle"
-    PROCESSING = "processing"
-    WAITING = "waiting"
-    LEARNING = "learning"
-    SHUTTING_DOWN = "shutting_down"
-    MEMORISING = "memorising"
-    SOCIALISING = "socialising"
+class AgentStatus(IntEnum):
+    IDLE = 0
+    QUEUE_PROCESSING = 1
+    MESSAGE_RECEIVED = 2
+    MESSAGE_PROCESSING = 3
+    TOOL_EXECUTING = 4
+    WAITING_RESPONSE = 5
+    LEARNING = 6
+    MEMORISING = 7
+    SOCIALISING = 8
+    SHUTTING_DOWN = 9
 
     @classmethod
     def get_valid_transitions(cls, current_status: 'AgentStatus') -> Set['AgentStatus']:
         """Define valid status transitions."""
         VALID_TRANSITIONS = {
-            cls.IDLE: {cls.PROCESSING, cls.LEARNING, cls.MEMORISING, 
-                      cls.SOCIALISING, cls.SHUTTING_DOWN},
-            cls.PROCESSING: {cls.IDLE, cls.WAITING, cls.SHUTTING_DOWN},
-            cls.WAITING: {cls.PROCESSING, cls.SHUTTING_DOWN},
-            cls.LEARNING: {cls.IDLE, cls.PROCESSING, cls.SHUTTING_DOWN},
-            cls.MEMORISING: {cls.IDLE, cls.PROCESSING, cls.SHUTTING_DOWN},
-            cls.SOCIALISING: {cls.IDLE, cls.PROCESSING, cls.WAITING, cls.SHUTTING_DOWN},
-            cls.SHUTTING_DOWN: set()  # No transitions out of shutdown
+            cls.IDLE: {cls.MESSAGE_RECEIVED, cls.LEARNING, 
+                      cls.MEMORISING, cls.SOCIALISING, cls.SHUTTING_DOWN},
+            cls.MESSAGE_RECEIVED: {cls.QUEUE_PROCESSING, cls.WAITING_RESPONSE, cls.SHUTTING_DOWN},
+            cls.QUEUE_PROCESSING: {cls.IDLE, cls.WAITING_RESPONSE, cls.MESSAGE_PROCESSING, cls.SHUTTING_DOWN},
+            cls.MESSAGE_PROCESSING: {cls.QUEUE_PROCESSING, cls.TOOL_EXECUTING, 
+                                   cls.WAITING_RESPONSE, cls.IDLE, cls.SHUTTING_DOWN},
+            cls.TOOL_EXECUTING: {cls.MESSAGE_PROCESSING, cls.WAITING_RESPONSE, cls.IDLE,
+                                cls.SHUTTING_DOWN},
+            cls.WAITING_RESPONSE: {cls.QUEUE_PROCESSING, cls.MESSAGE_PROCESSING, cls.TOOL_EXECUTING, 
+                                 cls.IDLE, cls.SHUTTING_DOWN},
+            cls.LEARNING: {cls.IDLE, cls.SHUTTING_DOWN},
+            cls.MEMORISING: {cls.IDLE, cls.LEARNING, cls.SHUTTING_DOWN},
+            cls.SOCIALISING: {cls.IDLE, cls.WAITING_RESPONSE, cls.SHUTTING_DOWN},
+            cls.SHUTTING_DOWN: set()
         }
         return VALID_TRANSITIONS.get(current_status, set())
 

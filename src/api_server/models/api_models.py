@@ -2,46 +2,6 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-class QueryRequest(BaseModel):
-    """
-    Represents a query request to an agent.
-    """
-    question: str = Field(
-        ...,
-        description="The question or prompt to be processed by the agent",
-        examples=["What is the current market analysis?"]
-    )
-    max_turns: int | None = Field(
-        default=5,
-        description="Maximum number of conversation turns allowed",
-        ge=1,
-        le=10
-    )
-    debug: bool | None = Field(
-        default=False,
-        description="Enable debug mode for detailed processing information"
-    )
-
-class QueryResponse(BaseModel):
-    """
-    Represents a response to a query request.
-    """
-    response: str = Field(
-        ...,
-        description="The agent's response to the query",
-        examples=["Based on current market analysis..."]
-    )
-    status: str = Field(
-        default="success",
-        description="Status of the query processing",
-        enum=["success", "error", "pending"],
-        examples=["success"]
-    )
-    error: str | None = Field(
-        default=None,
-        description="Error message if processing failed"
-    )
-
 class APIMessage(BaseModel):
     """
     Defines the structure for inter-agent communication messages.
@@ -66,11 +26,6 @@ class APIMessage(BaseModel):
         description="ISO format timestamp of message creation",
         examples=["2024-03-15T14:30:00.000Z"]
     )
-    message_type: str = Field(
-        default="text",
-        description="Type of message being sent",
-        enum=["text", "command", "data", "status"]
-    )
     conversation_id: str = Field(
         ...,
         description="Unique identifier for the conversation thread",
@@ -78,7 +33,7 @@ class APIMessage(BaseModel):
     )
 
     @classmethod
-    def create(cls, sender: str, receiver: str, content: str, conversation_id: str, message_type: str = "text") -> "APIMessage":
+    def create(cls, sender: str, receiver: str, content: str, conversation_id: str) -> "APIMessage":
         """
         Factory method to create a message with current timestamp.
         
@@ -87,7 +42,6 @@ class APIMessage(BaseModel):
             receiver: Identifier of the receiving agent
             content: Message content
             conversation_id: Unique conversation identifier
-            message_type: Type of message (default: "text")
             
         Returns:
             APIMessage: Newly created message instance
@@ -97,8 +51,7 @@ class APIMessage(BaseModel):
             receiver=receiver,
             content=content,
             timestamp=datetime.utcnow().isoformat(),
-            conversation_id=conversation_id,
-            message_type=message_type
+            conversation_id=conversation_id
         )
 
 class AgentResponse(BaseModel):
@@ -154,3 +107,28 @@ class FeedbackMessage(BaseModel):
         description="ISO format timestamp of feedback creation",
         examples=["2024-03-15T14:30:00.000Z"]
     )
+
+class PromptModel(BaseModel):
+    prompt: str = Field(..., description="The prompt to be used")
+    prompt_type: str = Field(..., description="The type of prompt")
+    uuid: str = Field(..., description="The unique identifier for the prompt")
+    timestamp: str = Field(..., description="The timestamp that the PromptModel was created")
+    owner_agent_name: str = Field(..., description="The name of the agent that owns the prompt")
+    status: str = Field(..., description="The status of the prompt") #may want to make this an enum
+
+class SocialMessage(APIMessage):
+    """
+    Represents a social message between agents that may contain an optional PromptModel.
+    """
+    prompt: Optional[PromptModel] = Field(default=None, description="The prompt being shared between agents")
+
+    @classmethod
+    def create(cls, sender: str, receiver: str, content: str, conversation_id: str, prompt: Optional[PromptModel] = None) -> "SocialMessage":
+        return cls(
+            sender=sender,
+            receiver=receiver,
+            content=content,
+            conversation_id=conversation_id,
+            prompt=prompt,
+            timestamp=datetime.utcnow().isoformat()
+        )

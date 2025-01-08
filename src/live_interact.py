@@ -138,13 +138,22 @@ async def handle_list_status():
             response = await client.get("http://localhost:8000/agent/status/all")
             statuses = response.json()
             print("\nAgent Statuses:")
-            # Handle both object and string status formats
-            for agent, status in statuses.items():
-                if isinstance(status, dict):
-                    status_value = status.get('status', 'UNKNOWN')
-                else:
-                    status_value = status
-                print(f"- {agent}: {status_value}")
+            for agent, status_info in statuses.items():
+                # Get the status value and convert to enum name
+                status_value = status_info.get('status', 'UNKNOWN')
+                try:
+                    # Convert integer status to enum name
+                    status_name = AgentStatus(status_value).name
+                    category = status_info.get('category', 'unknown')
+                    print(f"- {agent}: {status_name} ({category})")
+                    
+                    # If there's an error, show it
+                    if 'error' in status_info:
+                        print(f"  Error: {status_info['error']}")
+                except ValueError:
+                    # If we can't convert to enum, show raw status
+                    print(f"- {agent}: {status_value}")
+                    
         except Exception as e:
             print(f"\nError listing statuses: {str(e)}")
 

@@ -103,10 +103,12 @@ async def start_directory_service():
         )
         return await directory_service.route_message(message)
 
+    #TODO: this is pointless. Needs to be reimplmented or removed.
     @app.get("/health")
     async def health_check():
         log_event(logger, "health.check", "Health check requested")
         return {"status": "healthy"}
+
 
     @app.get("/collections")
     async def list_collections():
@@ -151,15 +153,19 @@ async def start_directory_service():
         """
         Retrieve current status of all registered agents.
         
-        Performs health checks on each registered agent and returns their status.
-        Possible status values:
-        - healthy: Agent is responsive and operational
+        Gets the internal AgentStatus for each registered agent.
+        Possible status categories:
+        - active: Agent returned a valid AgentStatus
         - unreachable: Agent cannot be contacted
         - error: Agent returned an error state
         
         Returns:
-            Dict[str, Dict]: Status information for each agent
-            
+            Dict[str, Dict]: Status information for each agent including:
+                - status: Current AgentStatus value
+                - previous_status: Previous AgentStatus value (if available)
+                - timestamp: When status was checked
+                - error: Error message if status check failed
+                
         Raises:
             HTTPException: If status collection fails
         """
@@ -170,24 +176,56 @@ async def start_directory_service():
                 try:
                     async with httpx.AsyncClient() as client:
                         response = await client.get(
-                            f"http://{agent_info['address']}:{agent_info['port']}/health"
+                            f"http://{agent_info['address']}:{agent_info['port']}/get_status",
+                            timeout=5.0  # Add reasonable timeout
                         )
+                        
                         if response.status_code == 200:
-                            statuses[agent_name] = response.json()
+                            status_data = response.json()
+                            # Validate that we got a valid AgentStatus value
+                            try:
+                                AgentStatus(status_data["status"])  # Will raise ValueError if invalid
+                                statuses[agent_name] = {
+                                    "category": "active",
+                                    **status_data  # Include full status response
+                                }
+                            except ValueError:
+                                statuses[agent_name] = {
+                                    "category": "error",
+                                    "status": "invalid",
+                                    "error": f"Agent returned invalid status value: {status_data['status']}",
+                                    "timestamp": datetime.now().isoformat()
+                                }
                         else:
                             statuses[agent_name] = {
-                                "status": "unreachable", 
-                                "error": response.text
+                                "category": "unreachable",
+                                "status": "unknown",
+                                "error": response.text,
+                                "timestamp": datetime.now().isoformat()
                             }
+                except httpx.TimeoutError:
+                    statuses[agent_name] = {
+                        "category": "unreachable",
+                        "status": "timeout",
+                        "error": "Agent failed to respond within timeout period",
+                        "timestamp": datetime.now().isoformat()
+                    }
                 except Exception as e:
                     statuses[agent_name] = {
-                        "status": "error", 
-                        "error": str(e)
+                        "category": "error",
+                        "status": "error",
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat()
                     }
+                
+                log_event(logger, "status.check", 
+                         f"Agent {agent_name} status: {statuses[agent_name]['category']}")
             
             return statuses
+            
         except Exception as e:
-            log_event(logger, "agent.status.all.error", f"Error getting agent statuses: {str(e)}")
+            log_event(logger, "agent.status.all.error", 
+                     f"Error getting agent statuses: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/agent/feedback")
@@ -259,6 +297,50 @@ async def start_directory_service():
         except Exception as e:
             log_event(logger, "status.update.error", 
                      f"Error updating agent status: {str(e)}\n{traceback.format_exc()}", 
+                     level="ERROR")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/agent/{agent_name}/get_status")
+    async def get_agent_status(agent_name: str):
+        """Retrieve the current status of a specific agent.
+        
+        Args:
+            agent_name: Name of the agent to check
+            
+        Returns:
+            Dict containing the agent's current internal status
+            
+        Raises:
+            HTTPException: If agent not found or status check fails
+        """
+        try:
+            log_event(logger, "status.check.request", 
+                     f"Received status check request for {agent_name}")
+            
+            # Get agent info from directory
+            agents_dict = directory_service.lookup_agents(agent_name)
+            if not agents_dict:
+                log_event(logger, "status.check.error", 
+                         f"Agent {agent_name} not found", level="ERROR")
+                raise HTTPException(status_code=404, detail=f"Agent {agent_name} not found")
+            
+            agent_info = agents_dict[agent_name]
+            
+            # Request status from agent's get_status endpoint
+            async with httpx.AsyncClient() as client:
+                log_event(logger, "status.check.forward", 
+                         f"Requesting internal status from {agent_name} at {agent_info['address']}:{agent_info['port']}")
+                response = await client.get(
+                    f"http://{agent_info['address']}:{agent_info['port']}/get_status"
+                )
+                response.raise_for_status()
+                return response.json()
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            log_event(logger, "status.check.error", 
+                     f"Error checking agent status: {str(e)}\n{traceback.format_exc()}", 
                      level="ERROR")
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -529,6 +611,19 @@ async def start_agent_server(agent: BaseAgent, port: int) -> asyncio.Task:
             error_msg = f"Unexpected error updating status: {str(e)}"
             agent.logger.error(error_msg, exc_info=True)
             raise HTTPException(status_code=500, detail=error_msg)
+
+    @agent_app.get("/get_status")
+    async def get_internal_status():
+        """Get the agent's current internal status."""
+        try:
+            return {
+                "status": agent.status.value,
+                "previous_status": agent._previous_status.value if agent._previous_status else None,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            agent.logger.error(f"Error getting internal status: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     # Add health check endpoint for agent server
     @agent_app.get("/health")

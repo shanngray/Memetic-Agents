@@ -29,8 +29,14 @@ from api_server.models.api_models import APIMessage
 from src.log_config import setup_logger, log_tool_call, log_agent_message, log_error, log_event
 from src.memory.memory_manager import MemoryManager
 from src.base_agent.tool_manager import ToolManager, ToolError
+from src.base_agent.communication_module.receive_message_impl import receive_message_impl
+from src.base_agent.communication_module.process_message_impl import process_message_impl
+from src.base_agent.communication_module.send_message_impl import send_message_impl
+from src.base_agent.feedback_module.give_feedback import evaluate_response_impl, evaluate_and_send_feedback_impl
+from src.base_agent.feedback_module.accept_feedback import receive_feedback_impl, process_feedback_impl
+from .type import Agent  # Add this import at the top
 
-class BaseAgent:
+class BaseAgent(Agent):  # Change to inherit from Agent
     def __init__(
         self,
         api_key: str,
@@ -38,30 +44,8 @@ class BaseAgent:
         config: Optional[AgentConfig] = None
     ):
         """Initialize the base agent with OpenAI client and configuration."""
-        super().__init__()
-        
-        self.config = config or AgentConfig()
-        
-        # Setup folder for agent files
-        self.files_path = Path("agent_files") / self.config.agent_name
-        self.files_path.mkdir(parents=True, exist_ok=True)
-
-        self.client = AsyncOpenAI(api_key=api_key)
-        self.status = AgentStatus.IDLE
-        self.pending_requests: Dict[str, asyncio.Future] = {}
-        self.request_queue: asyncio.Queue = asyncio.Queue()
-        self.waiting_for: Optional[str] = None
-        self.tools: Dict[str, Dict[str, Any]] = {}
-        self.internal_tools: Dict[str, Callable] = {}
-        self.old_conversation_list: Dict[str, str] = {}  # Dictionary where key is conversation_id and value is short/long
-        # Example of a conversation entry:
-        # self.conversation_list = {
-        #     "conversation_id_1": "short_term",
-        #     "conversation_id_2": "long_term"
-        # }
-
-        # Define a context variable to keep track of the current conversation ID
-        self.current_conversation_id = contextvars.ContextVar('current_conversation_id', default=None)
+        # Call parent class init first
+        super().__init__(api_key, chroma_client, config)
         
         # Initialize logger before any other operations
         self.logger = setup_logger(
@@ -73,13 +57,77 @@ class BaseAgent:
         
         self._setup_logging()
 
+        # Load System Prompts
+        self._system_prompt = self.config.system_prompt
+        self._give_feedback_prompt = """Evaluate the quality of the following response. 
+                Provide:
+                1. A score from 0-10 (where 10 is excellent)
+                2. Brief, constructive feedback (Include WHAT is good/bad, WHY it matters, and HOW to improve)
+                
+                Format your response as a JSON object with 'score' and 'feedback' fields."""
+        self._thought_loop_prompt = (
+                    "Based on the conversation so far, determine if a complete response has been provided "
+                    "and if the initial query has been fully addressed. If complete, respond with exactly 'STOP'. "
+                    "Otherwise, respond with clear instructions on what steps to take next, starting with 'We still need to...' "
+                    "and ending with '...Please continue.'"
+                )
+        self._xfer_long_term_prompt = """Analyze this memory and extract information in SPO (Subject-Predicate-Object) format.
+                            Format your response as a JSON object with this structure:
+                            {
+                                "memories": [
+                                    {
+                                        "content": "SPO statement in 1-3 sentences",
+                                        "type": "fact|decision|preference|pattern",
+                                        "tags": ["#tag1", "#tag2", ...],
+                                        "importance": 1-10
+                                    }
+                                ]
+                            }
+                            
+                            Include type as a tag and add other relevant topic/context tags.
+                            Keep statements clear and concise.
+                            
+                            Example Input: 'During the community meeting last Tuesday, Sarah Johnson presented a detailed proposal for a new youth center 
+                            downtown. The proposal included a $500,000 budget plan and received strong support from local business owners. Several attendees 
+                            raised concerns about parking availability, but Sarah addressed these by suggesting a partnership with the nearby church for 
+                            additional parking spaces during peak hours.'
+
+                            Example Output:
+                            {
+                                "memories": [
+                                    {
+                                        "content": "Sarah Johnson (S) presented (P) a youth center proposal at the community meeting (O). The proposal 
+                                        outlined a $500,000 budget and garnered support from local businesses.",
+                                        "type": "fact",
+                                        "tags": ["#community_development", "#youth_services", "#proposal", "#budget"],
+                                        "importance": 8
+                                    }
+                                ]
+                            }
+                            """
+        self._xfer_feedback_prompt = """Analyze this feedback and extract key insights.
+                        Format your response as a JSON object with this structure:
+                        {
+                            "insights": [
+                                {
+                                    "content": "Clear statement of insight/learning",
+                                    "category": "strength|weakness|improvement|pattern",
+                                    "tags": ["#relevant_tag1", "#relevant_tag2"],
+                                    "importance": 1-10,
+                                    "action_items": ["specific action to take", ...]
+                                }
+                            ]
+                        }"""
+        self._reflect_feedback_prompt = """You are an analytical assistant helping to reflect on feedback received.
+                Consider patterns, trends, and areas for improvement. Focus on actionable insights
+                and concrete steps for improvement."""
+
+        # Initialize tool manager
         self.tool_mod = ToolManager(self)
         
-        # Add send_message to internal tools
+        # Add and register internal tools
         self.internal_tools["send_message"] = self.send_message
         self.internal_tools["search_memory"] = self.search_memory
-
-        # Register all internal tools AFTER adding them to tool_mod.internal
         for tool_name, tool_func in self.internal_tools.items():
             self.tool_mod.register(tool_func)
             
@@ -87,39 +135,24 @@ class BaseAgent:
         if self.config.enabled_tools:
             self._load_tool_definitions()
 
-        #ToDO: check if this is used
-        self.conversation_histories: Dict[str, List[Message]] = {}
-        
-        self.agent_directory = None  # Will be set during registration
-
-        # Initialize memory manager with default collections
+        # Initialize memory manager
         self.memory = MemoryManager(
             agent_name=self.config.agent_name,
             logger=self.logger,
             chroma_client=chroma_client
         )
         
-
-
         # Initialize collections including feedback
         asyncio.create_task(self.memory.initialize(
             collection_names=["short_term", "long_term", "feedback"]
         ))
         
-
-        self.conversations: Dict[str, List[Message]] = {}
-
-
-        # Load existing memory if available
+        # Load existing memory
         self._load_memory()
         
         # Register shutdown handlers
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
-
-        self._previous_status = None
-        self._status_lock = asyncio.Lock()
-        self._shutdown_event = asyncio.Event()
 
     def _setup_logging(self) -> None:
         """Configure logging if debug is enabled."""
@@ -176,235 +209,8 @@ class BaseAgent:
         for tool in tools:
             self.tool_mod.register(tool)
             
-
-    def _trim_history(self, conversation_id: str) -> None:
-        """Trim conversation history to max_history length."""
-        if conversation_id not in self.conversations:
-            return
-            
-        messages = self.conversations[conversation_id]
-        if len(messages) > self.config.max_history:
-            self.logger.debug(f"Trimming history from {len(messages)} messages")
-            self.conversations[conversation_id] = [messages[0]] + messages[-(self.config.max_history-1):]
-
     async def process_message(self, content: str, sender: str, conversation_id: str) -> str:
-        if self.status == AgentStatus.SHUTTING_DOWN:
-            raise ValueError("Agent is shutting down")
-
-        await self.set_status(AgentStatus.PROCESSING)
-
-        try:
-            log_event(self.logger, "session.started", 
-                      f"Processing message from {sender} in conversation {conversation_id}")
-            log_event(self.logger, "message.content", f"Content: {content}", level="DEBUG")
-
-            # Set the current conversation ID in the context variable
-            token = self.current_conversation_id.set(conversation_id)  # Added to set context
-
-            if conversation_id not in self.conversations:
-                self.conversations[conversation_id] = [
-                    Message(role="system", content=self.config.system_prompt)
-                ]
-            
-            messages = self.conversations[conversation_id]
-            
-            # Add user message if not duplicate
-            last_message = messages[-1] if messages else None
-            if not last_message or last_message.content != content:
-                user_message = Message(
-                    role="user",
-                    content=content,
-                    sender=sender,
-                    name=None,
-                    tool_calls=None,
-                    tool_call_id=None,
-                    receiver=self.config.agent_name,
-                    timestamp=datetime.now().isoformat()
-                )
-                messages.append(user_message)
-                log_event(self.logger, "message.added", 
-                         f"Added user message to conversation {conversation_id}")
-
-            final_response = None
-            iteration_count = 0
-            max_iterations = 5
-            while iteration_count < max_iterations:
-                try:
-                    log_event(self.logger, "openai.request", 
-                             f"Sending request to OpenAI with {len(messages)} messages")
-                    
-                    response = await asyncio.wait_for(
-                        self.client.chat.completions.create(
-                            model=self.config.model,
-                            temperature=self.config.temperature,
-                            messages=[m.dict() for m in messages],
-                            tools=list(self.tools.values()) if self.tools else None,
-                            timeout=3000
-                        ),
-                        timeout=3050
-                    )
-                    print("\n|---------------PROCESS MESSAGE-----------------|\n")
-                    print("ITERATION:", iteration_count)
-                    print("\nAGENT NAME:", self.config.agent_name)
-                    # Print response details
-                    print("\nResponse Details:")
-                    print(f"  Model: {response.model}")
-                    print(f"  Created: {response.created}")
-                    
-                    # Print message details
-                    print("\nMessage Details:")
-                    message = response.choices[0].message
-                    print(f"  Role: {message.role}")
-                    print(f"  Content: {message.content}")
-                    
-                    # Print tool call details if present
-                    if message.tool_calls:
-                        print("\nTool Calls:")
-                        for tc in message.tool_calls:
-                            print(f"\n  Tool Call ID: {tc.id}")
-                            print(f"  Type: {tc.type}")
-                            print(f"  Function Name: {tc.function.name}")
-                            print(f"  Arguments: {tc.function.arguments}")
-                    print("\n|--------------------------------|\n")
-
-                    raw_message = response.choices[0].message
-                    message_content = raw_message.content or ""
-                    
-                    # Create and add assistant message
-                    assistant_message = Message(
-                        role="assistant",
-                        content=message_content,
-                        tool_calls=[ToolCall(
-                            id=tc.id,
-                            type=tc.type,
-                            function={
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            }
-                        ) for tc in raw_message.tool_calls] if raw_message.tool_calls else None,
-                        sender=self.config.agent_name,
-                        receiver=sender,
-                        timestamp=datetime.now().isoformat(),
-                        name=None,
-                        tool_call_id=None
-                    )
-                    messages.append(assistant_message)
-                    log_event(self.logger, "message.added", 
-                             f"Added assistant message to conversation {conversation_id}")
-                    
-                    # Process tool calls if present
-                    if raw_message.tool_calls:
-                        log_event(self.logger, "tool.processing", 
-                                 f"Processing {len(raw_message.tool_calls)} tool calls")
-                        
-                        tool_calls = [ToolCall(
-                            id=tc.id,
-                            type=tc.type,
-                            function={
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            }
-                        ) for tc in raw_message.tool_calls]
-                        
-                        # Execute each tool and add results
-                        tool_iteration_count = 0
-                        for tool_call in tool_calls:
-                            tool_iteration_count += 1
-                            try:
-                                await self.set_status(AgentStatus.WAITING) #change status outside of execute call
-                                tool_result = await self.tool_mod.execute(tool_call)
-                                if self.status != AgentStatus.SHUTTING_DOWN:
-                                    await self.set_status(AgentStatus.PROCESSING)
-                                tool_message = Message(
-                                    role="tool",
-                                    content=json.dumps(tool_result),
-                                    tool_call_id=tool_call.id,
-                                    timestamp=datetime.now().isoformat(),
-                                    tool_calls=None,
-                                    sender=tool_call.function['name'],
-                                    receiver=self.config.agent_name
-                                )
-                                print("\n----------------TOOL CALL MESSAGE----------------\n")
-                                print("ITERATION:", tool_iteration_count)
-                                print(
-                                    f"\nTOOL MESSAGE: {tool_message.content}"
-                                    f"\nSENDER: {tool_message.sender}"
-                                    f"\nRECEIVER: {tool_message.receiver}"
-                                    f"\nTOOL CALL ID: {tool_message.tool_call_id}"
-                                    f"\nTIMESTAMP: {tool_message.timestamp}"
-                                )
-                                print("\n-----------------------------------------------\n")
-                                messages.append(tool_message)
-                                log_event(self.logger, "tool.result", 
-                                         f"Added tool result for {tool_call.function['name']}")
-                                
-                            except ToolError as e:
-                                error_message = Message(
-                                    role="tool",
-                                    content=json.dumps({"error": str(e)}),
-                                    tool_call_id=tool_call.id,
-                                    timestamp=datetime.now().isoformat(),
-                                    name=None,
-                                    tool_calls=None,
-                                    sender=self.config.agent_name,
-                                    receiver=sender
-                                )
-                                messages.append(error_message)
-                                log_error(self.logger, 
-                                         f"Tool error in {tool_call.function['name']}: {str(e)}")
-                                                
-                        continue  # Continue loop to process tool results
-                    
-                    # If we have a message without tool calls, evaluate to see if we should continue or stop
-                    if message_content:
-                        continue_or_stop = await self._continue_or_stop(messages)
-                        if continue_or_stop == "STOP":
-                            final_response = message_content
-                            log_event(self.logger, "message.final", 
-                                     f"Final response generated for conversation {conversation_id}")
-                            break
-                        else:
-                            # Wrap and append non-STOP message
-                            messages.append(Message(
-                                role="user",
-                                content=continue_or_stop,
-                                timestamp=datetime.now().isoformat(),
-                                name=self.config.agent_name,
-                                tool_calls=None,
-                                tool_call_id=None,
-                                sender=self.config.agent_name,
-                                receiver=self.config.agent_name
-                            ))
-                            log_event(self.logger, "message.continue", 
-                                     f"Added intermediate response for conversation {conversation_id}")
-                    
-                except asyncio.TimeoutError as e:
-                    log_error(self.logger, "OpenAI request timed out", exc_info=e)
-                    raise
-                except Exception as e:
-                    log_error(self.logger, "Error during message processing", exc_info=e)
-                    raise
-                
-                iteration_count += 1
-            
-            if iteration_count >= max_iterations:
-                log_event(self.logger, "message.max_iterations", 
-                         f"Reached maximum iterations ({max_iterations}) for conversation {conversation_id}")
-                final_response = f"I apologize, but I only got to here: {message_content}"
-            
-            # Trim history if needed
-            self._trim_history(conversation_id)
-            
-            if final_response is None:
-                error_msg = "Failed to generate a proper response"
-                log_error(self.logger, error_msg)
-                return "I apologize, but I wasn't able to generate a proper response."
-            
-            return final_response
-                
-        finally:
-            # Reset the context variable after processing
-            self.current_conversation_id.reset(token)
+        return await process_message_impl(self, content, sender, conversation_id)
 
     async def _continue_or_stop(self, messages: List[Message]) -> str:
         """Evaluate message content to determine if we should continue or stop.
@@ -419,14 +225,16 @@ class BaseAgent:
             # Create prompt to evaluate conversation state
             system_prompt = Message(
                 role="system",
-                content=(
-                    "Based on the conversation so far, determine if a complete response has been provided "
-                    "or if the initial query has been fully addressed. If complete, respond with exactly 'STOP'. "
-                    "Otherwise, respond with clear instructions on what steps to take next."
-                )
+                content=self._thought_loop_prompt
             )
-            messages = messages[1:]  # Remove first message
-            messages.insert(0, system_prompt)  # Add new system prompt at start
+            
+            # OLD APPROACH - Swap system prompt with thought loop prompt
+            #messages = messages[1:]  # Remove first message
+            #messages.insert(0, system_prompt)  # Add new system prompt at start
+            
+            # NEW APPROACH - Add thought loop prompt to the end of the message list
+            messages.append(system_prompt)
+            
             # Make LLM call to evaluate
             raw_response = await self.client.chat.completions.create(
                 model=self.config.model,
@@ -483,179 +291,12 @@ class BaseAgent:
 
         return response
 
-    # TODO: We might want to get rid of this. Would need to update process_message and would need to make sure that all messages have the sender and receiver fields
-    def get_conversation_history(self, agent_name: str) -> List[Message]:
-        """Get messages related to a specific agent across all conversations."""
-        related_messages = []
-        for messages in self.conversations.values():
-            related_messages.extend([
-                msg for msg in messages 
-                if (msg.role == "system") or  # Include system prompt
-                   (hasattr(msg, 'sender') and msg.sender == agent_name) or
-                   (hasattr(msg, 'receiver') and msg.receiver == agent_name)
-            ])
-        return related_messages
-
     async def receive_message(self, sender: str, content: str, conversation_id: str) -> str:
-        """Process received message from another agent."""
-        log_event(self.logger, "agent.message_received", 
-                  f"Message from {sender} in conversation {conversation_id}")
-        log_event(self.logger, "message.content", f"{content}", level="DEBUG")
-        
-        # Get current queue size before adding new message
-        queue_size = self.request_queue.qsize()
-        queue_position = queue_size + 1
-        
-        loaded_conversation = self.current_conversation_id.get()
-
-        if conversation_id == loaded_conversation:
-            # We are in the current conversation, so we can proceed with processing the message
-            pass
-        elif conversation_id in self.conversations:
-            # We have a short term conversation, we need to update the current conversation_id
-            self.current_conversation_id.set(conversation_id)
-            pass
-        elif conversation_id in self.old_conversation_list:
-            # We have a long term conversation, so we need to load it into the conversation history and update the current conversation_id
-            self.current_conversation_id.set(conversation_id)
-            self.conversations[conversation_id].append(Message(role="system", content="This is an old conversation, you may have memories in longer_term memory that will help with context."))
-            pass
-        else:
-            # This is a new conversation, we need to update the conversation list and the current conversation_id
-            log_event(self.logger, "session.created", f"Creating new conversation: {conversation_id}")
-            self.current_conversation_id.set(conversation_id)
-            self.conversations[conversation_id] = [
-                Message(role="system", content=self.config.system_prompt)
-            ]
-            pass
-
-        # Create request ID and future
-        request_id = str(uuid.uuid4())
-        future = asyncio.Future()
-        self.pending_requests[request_id] = future
-        
-        # Queue the request
-        request = {
-            "id": request_id,
-            "sender": sender,
-            "content": content,
-            "conversation_id": conversation_id,
-            "timestamp": datetime.now().isoformat(),
-            "queue_position": queue_position
-        }
-        log_event(self.logger, "queue.added", 
-                  f"Queuing request {request_id} from {sender} (position {queue_position} in queue)")
-        await self.request_queue.put(request)
-        
-        try:
-            # Wait for response with timeout
-            log_event(self.logger, "queue.status", 
-                     f"Request {request_id} waiting at position {queue_position}", level="DEBUG")
-            response = await asyncio.wait_for(future, timeout=300.0)
-            log_event(self.logger, "queue.completed", 
-                     f"Request {request_id} completed successfully (was position {queue_position})")
-            return response
-        except asyncio.TimeoutError:
-            log_event(self.logger, "session.timeout", 
-                     f"Request {request_id} timed out after 30 seconds (was position {queue_position})", 
-                     level="WARNING")
-            raise
-        finally:
-            if request_id in self.pending_requests:
-                del self.pending_requests[request_id]
-                log_event(self.logger, "queue.status", 
-                         f"Cleaned up request {request_id} (was position {queue_position})", 
-                         level="DEBUG")
+        return await receive_message_impl(self, sender, content, conversation_id)
 
     async def send_message(self, receiver: str, content: str) -> Dict[str, Any]:
         """Send a message via API to another agent registered in the directory service."""
-        await self.set_status(AgentStatus.WAITING)
-        sender = self.config.agent_name
-
-        if sender == receiver:
-            log_event(self.logger, "agent.error", 
-                      f"Cannot send message to self: {sender} -> {receiver}", 
-                      level="ERROR")
-            raise ValueError(f"Cannot send message to self: {sender} -> {receiver}")
-        
-        # Retrieve the parent conversation ID from the context variable
-        conversation_id = self.current_conversation_id.get()  # Added to get parent ID from context
-
-
-
-
-        log_agent_message(self.logger, "out", sender, receiver, content)
-        
-        async with httpx.AsyncClient(timeout=3000.0) as client:
-            message = APIMessage.create(
-                sender=sender,
-                receiver=receiver,
-                content=content,
-                conversation_id=conversation_id
-            )
-            
-            try:
-                log_event(self.logger, "directory.route", 
-                         f"Sending message to directory service", level="DEBUG")
-                log_event(self.logger, "directory.route", 
-                         f"Request payload: {message.dict()}", level="DEBUG")
-                
-                response = await client.post(
-                    "http://localhost:8000/agent/message",
-                    json=message.dict(),
-                    timeout=3000.0
-                )
-                
-                log_event(self.logger, "directory.route", 
-                         f"Received response: Status {response.status_code}", level="DEBUG")
-                log_event(self.logger, "directory.route", 
-                         f"Response content: {response.text}", level="DEBUG")
-                
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as e:
-                    log_error(self.logger, f"HTTP error occurred: {str(e)}")
-                    log_error(self.logger, f"Response content: {response.text}")
-                    raise
-                
-                result = response.json()
-                message_content = result.get("message", "")
-                if isinstance(message_content, dict):
-                    message_content = message_content.get("message", "")
-                
-                log_agent_message(self.logger, "in", receiver, sender, message_content)
-                
-                # Evaluate response quality in background
-                asyncio.create_task(self._evaluate_and_send_feedback(
-                    receiver=receiver,
-                    conversation_id=conversation_id,
-                    response_content=message_content
-                ))
-                
-                return {
-                    "role": "assistant",
-                    "content": message_content,
-                    "sender": receiver,
-                    "receiver": sender,
-                    "timestamp": result.get("timestamp") or datetime.now().isoformat()
-                }
-                
-            except httpx.TimeoutException as e:
-                error_msg = f"Request timed out while sending message to {receiver}"
-                log_error(self.logger, error_msg, exc_info=e)
-                return {
-                    "role": "error",
-                    "content": f"{error_msg}: {str(e)}",
-                    "sender": "system",
-                    "receiver": sender,
-                    "timestamp": datetime.now().isoformat()
-                }
-            except Exception as e:
-                log_error(self.logger, f"Unexpected error in send_message", exc_info=e)
-                raise
-            finally:
-                if self.status != AgentStatus.SHUTTING_DOWN:
-                    await self.set_status(AgentStatus.PROCESSING)
+        return await send_message_impl(self, receiver, content)
 
     async def _evaluate_and_send_feedback(
         self,
@@ -664,60 +305,11 @@ class BaseAgent:
         response_content: str
     ) -> None:
         """Evaluate response quality and send feedback to the agent."""
-        try:
-            # Get evaluation from LLM
-            score, feedback = await self._evaluate_response(response_content)
-            
-            # Send feedback via API
-            async with httpx.AsyncClient() as client:
-                feedback_message = {
-                    "sender": self.config.agent_name,
-                    "receiver": receiver,
-                    "conversation_id": conversation_id,
-                    "score": score,
-                    "feedback": feedback,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-                
-                await client.post(
-                    "http://localhost:8000/agent/feedback",
-                    json=feedback_message,
-                    timeout=300.0
-                )
-                
-            log_event(self.logger, "feedback.sent",
-                     f"Sent feedback to {receiver} for conversation {conversation_id}")
-                     
-        except Exception as e:
-            log_error(self.logger, f"Failed to process/send feedback: {str(e)}")
+        return await evaluate_feedback_impl(self, receiver, conversation_id, response_content)
 
     async def _evaluate_response(self, response_content: str) -> Tuple[int, str]:
         """Evaluate response quality using LLM."""
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.config.model,
-                messages=[
-                    {"role": "system", "content": """Evaluate the quality of the following response. 
-                    Provide:
-                    1. A score from 0-10 (where 10 is excellent)
-                    2. Brief, constructive feedback (Include WHAT is good/bad, WHY it matters, and HOW to improve)
-                    
-                    Format your response as a JSON object with 'score' and 'feedback' fields."""},
-                    {"role": "user", "content": f"Response to evaluate:\n{response_content}"}
-                ],
-                response_format={ "type": "json_object" }
-            )
-            
-            print("\n|------------EVALUATE RESPONSE------------|\n")
-            ic(f"Response: {response}")
-            print("\n|--------------------------------|\n")
-            
-            result = json.loads(response.choices[0].message.content)
-            return result["score"], result["feedback"]
-            
-        except Exception as e:
-            log_error(self.logger, f"Failed to evaluate response: {str(e)}")
-            return 5, "Error evaluating response"  # Default neutral score
+        return await evaluate_response_impl(self, response_content)
 
     async def receive_feedback(
         self,
@@ -726,41 +318,8 @@ class BaseAgent:
         score: int,
         feedback: str
     ) -> None:
-        """Process and store received feedback from another agent.
-        
-        Args:
-            sender: Name of the agent providing feedback
-            conversation_id: ID of the conversation being rated
-            score: Numerical score (typically 0-10)
-            feedback: Detailed feedback text
-        """
-        try:
-            # Format feedback content
-            formatted_feedback = (
-                f"Feedback from {sender} regarding conversation {conversation_id}:\n"
-                f"Score: {score}/10\n"
-                f"Comments: {feedback}"
-            )
-            
-            # Store in feedback collection with metadata
-            metadata = {
-                "sender": sender,
-                "conversation_id": conversation_id,
-                "score": score,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-            await self.memory.store(
-                content=formatted_feedback,
-                collection_name="feedback",
-                metadata=metadata
-            )
-            
-            log_event(self.logger, "feedback.received",
-                     f"Received feedback from {sender} for conversation {conversation_id}")
-                     
-        except Exception as e:
-            log_error(self.logger, f"Failed to process received feedback: {str(e)}")
+        """Process and store received feedback from another agent."""
+        return await receive_feedback_impl(self, sender, conversation_id, score, feedback)
 
     def _load_memory(self) -> None:
         """Load short term memories into conversations and list of long term memories into old_conversation_list."""
@@ -806,7 +365,7 @@ class BaseAgent:
             # Convert grouped content into conversations
             for conv_id, group in conversation_groups.items():
                 # Start with system prompt
-                messages = [Message(role="system", content=self.config.system_prompt)]
+                messages = [Message(role="system", content=self._system_prompt)]
                 
                 # Combine all content for this conversation
                 combined_content = "\n".join(group["content"])
@@ -973,7 +532,7 @@ class BaseAgent:
 
     async def shutdown(self) -> None:
         """Gracefully shutdown the agent."""
-        await self.set_status(AgentStatus.SHUTTING_DOWN)
+        await self.set_status(AgentStatus.SHUTTING_DOWN, "shutdown")
         self._shutdown_event.set()
         
         self.logger.info(f"Shutting down {self.config.agent_name}")
@@ -1006,7 +565,7 @@ class BaseAgent:
             except Exception as e:
                 self.logger.error(f"Error in processing loop: {str(e)}")
                 if self.status != AgentStatus.SHUTTING_DOWN:
-                    await self.set_status(AgentStatus.IDLE)
+                    await self.set_status(AgentStatus.IDLE, "start")
 
     async def process_queue(self):
         """Process any pending requests in the queue"""
@@ -1018,7 +577,6 @@ class BaseAgent:
             request = await self.request_queue.get()
             queue_position = request.get('queue_position', 'unknown')
             
-            await self.set_status(AgentStatus.PROCESSING)
             try:
                 log_event(self.logger, "queue.dequeued", 
                          f"Processing request {request['id']} from {request['sender']} "
@@ -1051,26 +609,33 @@ class BaseAgent:
                     del self.pending_requests[request["id"]]
             finally:
                 if self.status != AgentStatus.SHUTTING_DOWN:
-                    await self.set_status(AgentStatus.IDLE)
+                    await self.set_status(AgentStatus.IDLE, "end processing queue")
 
-    async def set_status(self, new_status: AgentStatus) -> None:
+    async def set_status(self, new_status: AgentStatus, trigger: str) -> None:
         """Update agent status with validation and logging."""
         async with self._status_lock:
             if new_status == self.status:
                 return
 
             valid_transitions = AgentStatus.get_valid_transitions(self.status)
+            
             if new_status not in valid_transitions:
                 raise ValueError(
-                    f"Invalid status transition from {self.status} to {new_status}"
+                    f"Invalid status transition from {self.status} to {new_status} caused by {trigger}"
                 )
 
             self._previous_status = self.status
             self.status = new_status
+            self._status_history.append({
+                "timestamp": datetime.now().isoformat(),
+                "from": self._previous_status,
+                "to": self.status,
+                "trigger": trigger
+            })
             log_event(
-                self.logger, 
-                f"agent.{self.status}", 
-                f"Status changed from {self._previous_status} to {self.status}"
+                self.logger,
+                f"agent.{self.status}",
+                f"Status changed: {self._previous_status} -> {self.status} ({trigger})"
             )
             
             # Trigger memory consolidation when entering MEMORISING state
@@ -1106,7 +671,7 @@ class BaseAgent:
             if not short_term_memories:
                 log_event(self.logger, "memory.error", 
                          f"No memories older than {days_threshold} days found for consolidation")
-                await self.set_status(self._previous_status)
+                await self.set_status(self._previous_status, "transfer to long term - no memories found")
                 return
             
             # Process each memory individually
@@ -1116,40 +681,7 @@ class BaseAgent:
                     response = await self.client.chat.completions.create(
                         model=self.config.model,
                         messages=[
-                            {"role": "system", "content": """Analyze this memory and extract information in SPO (Subject-Predicate-Object) format.
-                            Format your response as a JSON object with this structure:
-                            {
-                                "memories": [
-                                    {
-                                        "content": "SPO statement in 1-3 sentences",
-                                        "type": "fact|decision|preference|pattern",
-                                        "tags": ["#tag1", "#tag2", ...],
-                                        "importance": 1-10
-                                    }
-                                ]
-                            }
-                            
-                            Include type as a tag and add other relevant topic/context tags.
-                            Keep statements clear and concise.
-                            
-                            Example Input: 'During the community meeting last Tuesday, Sarah Johnson presented a detailed proposal for a new youth center 
-                            downtown. The proposal included a $500,000 budget plan and received strong support from local business owners. Several attendees 
-                            raised concerns about parking availability, but Sarah addressed these by suggesting a partnership with the nearby church for 
-                            additional parking spaces during peak hours.'
-
-                            Example Output:
-                            {
-                                "memories": [
-                                    {
-                                        "content": "Sarah Johnson (S) presented (P) a youth center proposal at the community meeting (O). The proposal 
-                                        outlined a $500,000 budget and garnered support from local businesses.",
-                                        "type": "fact",
-                                        "tags": ["#community_development", "#youth_services", "#proposal", "#budget"],
-                                        "importance": 8
-                                    }
-                                ]
-                            }
-                            """},
+                            {"role": "system", "content": self._xfer_long_term_prompt},
                             {"role": "user", "content": f"Memory to analyze:\n{memory['content']}"}
                         ],
                         response_format={ "type": "json_object" }
@@ -1182,13 +714,13 @@ class BaseAgent:
                                  f"Processed memory {metadata['memory_id']} into long-term storage")
 
                         # Save to disk for debugging/backup
-                        await self._save_memory_to_disk(formatted_content, metadata)
+                        await self._save_memory_to_disk(formatted_content, metadata, "memory")
 
                 except Exception as e:
                     log_error(self.logger, f"Failed to process memory: {str(e)}", exc_info=e)
                     continue
                 
-            await self._cleanup_short_term_memories(days_threshold)
+            await self._cleanup_memories(days_threshold, "short_term")
             
             log_event(self.logger, "memory.memorising.complete",
                      f"Completed memory consolidation for {len(short_term_memories)} memories")
@@ -1197,53 +729,89 @@ class BaseAgent:
             log_error(self.logger, "Failed to consolidate memories", exc_info=e)
         finally:
             if self.status != AgentStatus.SHUTTING_DOWN:
-                await self.set_status(self._previous_status)
+                await self.set_status(self._previous_status, "transfer to long term - complete")
 
-    async def _save_memory_to_disk(self, structured_info: Dict, metadata: Dict) -> None:
-        """Save structured memory information to disk for debugging/backup."""
+    async def _save_memory_to_disk(self, structured_info: Dict, metadata: Dict, memory_type: str) -> None:
+        """Save structured memory information to disk for debugging/backup.
+        
+        Args:
+            structured_info: Dictionary containing the structured information to save
+            metadata: Dictionary containing metadata about the memory
+            memory_type: Type of memory ('memory' or 'feedback')
+        """
         try:
-            memory_dump_path = self.files_path / f"{self.config.agent_name}_long_term_memory_dump.md"
+            # Use different files for different memory types
+            file_suffix = "feedback" if memory_type == "feedback" else "long_term"
+            memory_dump_path = self.files_path / f"{self.config.agent_name}_{file_suffix}_memory_dump.md"
+            
             with FileLock(f"{memory_dump_path}.lock"):
                 with open(memory_dump_path, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n## Structured Memory Entry {metadata['timestamp']}\n")
+                    # Write header with timestamp
+                    f.write(f"\n\n## {memory_type.title()} Entry {metadata['timestamp']}\n")
+                    
+                    # Write metadata section
                     f.write("### Metadata\n")
                     for key, value in metadata.items():
                         if isinstance(value, list):
                             value = ", ".join(value)
                         f.write(f"{key}: {value}\n")
                     
-                    f.write("\n### Extracted Information\n")
-                    # Only write structured info if it's a dictionary with the expected format
-                    if isinstance(structured_info, dict):
-                        for category in ["facts", "decisions", "preferences", "patterns"]:
-                            if structured_info.get(category):
-                                f.write(f"\n#### {category.title()}\n")
-                                for item in structured_info[category]:
+                    # Write content section based on memory type
+                    if memory_type == "feedback":
+                        f.write("\n### Feedback Insights\n")
+                        if isinstance(structured_info, dict) and "insights" in structured_info:
+                            for insight in structured_info["insights"]:
+                                f.write(f"\n#### Insight\n")
+                                f.write(f"Content: {insight['content']}\n")
+                                f.write(f"Category: {insight['category']}\n")
+                                f.write(f"Importance: {insight['importance']}\n")
+                                f.write("Action Items:\n")
+                                for item in insight['action_items']:
                                     f.write(f"- {item}\n")
-                    f.write("\n")
+                                f.write(f"Tags: {', '.join(insight['tags'])}\n")
+                        else:
+                            # Handle case where structured_info is a string
+                            f.write(f"\n{structured_info}\n")
+                    else:
+                        # Handle regular memory entries
+                        f.write("\n### Extracted Information\n")
+                        if isinstance(structured_info, dict):
+                            for category in ["facts", "decisions", "preferences", "patterns"]:
+                                if structured_info.get(category):
+                                    f.write(f"\n#### {category.title()}\n")
+                                    for item in structured_info[category]:
+                                        f.write(f"- {item}\n")
+                        else:
+                            # Handle case where structured_info is a string
+                            f.write(f"\n{structured_info}\n")
+                        
+                        f.write("\n---\n")  # Add separator between entries
 
-            log_event(self.logger, "memory.dumped", 
-                     f"Saved structured memory {metadata['memory_id']} to disk")
+                    log_event(self.logger, f"{memory_type}.dumped", 
+                             f"Saved {memory_type} {metadata.get('memory_id') or metadata.get('insight_id')} to disk")
+                     
         except Exception as e:
             log_error(self.logger, 
-                     f"Failed to save memory {metadata['memory_id']} to disk: {str(e)}")
+                     f"Failed to save {memory_type} {metadata.get('memory_id') or metadata.get('insight_id')} to disk: {str(e)}")
 
-    async def _cleanup_short_term_memories(self, days_threshold: int = 0) -> None:
-        """Clean up old short-term memories after consolidation.
+    async def _cleanup_memories(self, days_threshold: int = 0, collection_name: str = "short_term") -> None:
+        """Clean up old memories from specified collection after consolidation.
         
         Args:
             days_threshold: Number of days worth of memories to keep.
                            Memories older than this will be deleted.
                            Default is 0 (clean up all processed memories).
+            collection_name: Name of collection to clean up.
+                           Default is "short_term".
         """
         try:
             log_event(self.logger, "memory.cleanup.start", 
-                     f"Starting cleanup of memories older than {days_threshold} days")
+                     f"Starting cleanup of {collection_name} memories older than {days_threshold} days")
             
-            # Retrieve all short-term memories
+            # Retrieve all memories from specified collection
             old_memories = await self.memory.retrieve(
                 query="",
-                collection_names=["short_term"],
+                collection_names=[collection_name],
                 n_results=1000
             )
             
@@ -1257,18 +825,23 @@ class BaseAgent:
             # Delete old memories using the ChromaDB ID from metadata
             deleted_count = 0
             for memory in old_memories:
-                chroma_id = memory["metadata"].get("chroma_id")  # Use the new chroma_id field
-                conversation_id = memory["metadata"].get("conversation_id")
-                self.old_conversation_list[conversation_id] = "placeholder_name"
+                chroma_id = memory["metadata"].get("chroma_id")
+                
+                # Only update old_conversation_list for short_term memories
+                if collection_name == "short_term":
+                    conversation_id = memory["metadata"].get("conversation_id")
+                    if conversation_id:
+                        self.old_conversation_list[conversation_id] = "placeholder_name"
+                
                 if chroma_id:
-                    await self.memory.delete(chroma_id, "short_term")
+                    await self.memory.delete(chroma_id, collection_name)
                     deleted_count += 1
                 
             log_event(self.logger, "memory.cleanup", 
-                     f"Cleaned up {deleted_count} memories older than {days_threshold} days")
+                     f"Cleaned up {deleted_count} memories from {collection_name} collection")
              
         except Exception as e:
-            log_error(self.logger, "Failed to cleanup short-term memories", exc_info=e)
+            log_error(self.logger, f"Failed to cleanup {collection_name} memories", exc_info=e)
 
     #TODO: Need to fix internal tools so that the descriptions and tool definitions work properly.
     async def search_memory(self, query: str, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -1316,4 +889,12 @@ class BaseAgent:
                 "error": error_msg,
                 "timestamp": datetime.now().isoformat()
             }
+
+    async def _process_feedback(self, days_threshold: int = 0) -> None:
+        """Process and transfer feedback to long-term memory.
         
+        Process is not active in BaseAgent, current implementation uses a separate
+        LLM call per feedback item which is inefficient and expensive.
+        
+        """
+        return await process_feedback_impl(self, days_threshold)

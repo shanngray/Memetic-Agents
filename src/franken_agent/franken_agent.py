@@ -142,7 +142,7 @@ class FrankenAgent(BaseAgent):
                     None
                 )
                 
-                new_content = f"{self.config.system_prompt}\n\nCurrent active technique:\n{technique_content}"
+                new_content = f"{self._system_prompt}\n\nCurrent active technique:\n{technique_content}"
                 
                 if system_message:
                     self.logger.debug("Updating existing system message")
@@ -209,12 +209,12 @@ class FrankenAgent(BaseAgent):
         
         # Build complete system prompt
         system_prompt = (
-            f"{self.config.system_prompt}\n\n"
+            f"{self._system_prompt}\n\n"
             f"Available tools:\n{tools_desc}\n\n"
             f"Available reasoning techniques (can be applied with the apply_technique tool):\n{techniques_desc}\n\n"
             f"Current active technique:\n{technique_content}"
         )
-        self.config.system_prompt = system_prompt
+        self._system_prompt = system_prompt
         
         self.logger.info(f"System prompt:\n\n {system_prompt}\n\n")
 

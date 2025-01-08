@@ -1,15 +1,15 @@
 import os
 from pathlib import Path
-from src.empirical_agent.empirical_agent import EmpiricalAgent
+from src.memetic_agent.memetic_agent import MemeticAgent
 from src.base_agent.config import AgentConfig
 from src.base_agent.models import Message
 from chromadb import PersistentClient
 
-def create_socraryny_agent(chroma_client: PersistentClient) -> EmpiricalAgent:
-    """Create an EmpiricalAgent instance."""
+def create_socraryny_agent(chroma_client: PersistentClient) -> MemeticAgent:
+    """Create an MemeticAgent instance."""
     
     # Load system prompt from file
-    system_prompt_path = Path("agent_files/Socraryny/system_prompt.md")
+    system_prompt_path = Path("agent_files/Socraryny/prompt_modules/sys_prompt.md")
     system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
     
     config = AgentConfig(
@@ -26,7 +26,7 @@ def create_socraryny_agent(chroma_client: PersistentClient) -> EmpiricalAgent:
         log_level=os.getenv("AGENT_LOG_LEVEL", "DEBUG")
     )
     
-    agent = EmpiricalAgent(
+    agent = MemeticAgent(
         api_key=os.getenv("OPENAI_API_KEY"),
         chroma_client=chroma_client,
         config=config
