@@ -51,7 +51,7 @@ blogs/
 chroma_db/
 logs/
 SYSTEM PROMPT.md
-SYSTEM_PROMPT.md
+SYSTEM_PROMPT_2.md
 
 # Testing
 .coverage
