@@ -69,3 +69,10 @@ poetry.lock
 .cursorrules_old
 src/base_agent/old_base_agent.py
 src/test/class_logic.py
+.cursorrules_20250112
+.cursorrules_20250113
+docs/FAQ.md
+docs/memetic-agents-article 1.md
+docs/memetic-agents-article copy.md
+docs/memetic-agents-new.md
+docs/memetic-agents-research-paper.md

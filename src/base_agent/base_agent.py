@@ -291,8 +291,8 @@ class BaseAgent(Agent):  # Change to inherit from Agent
 
         return response
 
-    async def receive_message(self, sender: str, content: str, conversation_id: str) -> str:
-        return await receive_message_impl(self, sender, content, conversation_id)
+    async def receive_message(self, message: APIMessage) -> str:
+        return await receive_message_impl(self, message)
 
     async def send_message(self, receiver: str, content: str) -> Dict[str, Any]:
         """Send a message via API to another agent registered in the directory service."""
@@ -568,48 +568,8 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                     await self.set_status(AgentStatus.IDLE, "start")
 
     async def process_queue(self):
-        """Process any pending requests in the queue"""
-        if self.status == AgentStatus.SHUTTING_DOWN:
-            return
-
-        if not self.request_queue.empty():
-            current_queue_size = self.request_queue.qsize()
-            request = await self.request_queue.get()
-            queue_position = request.get('queue_position', 'unknown')
-            
-            try:
-                log_event(self.logger, "queue.dequeued", 
-                         f"Processing request {request['id']} from {request['sender']} "
-                         f"(position {queue_position}/{current_queue_size} in queue)")
-                
-                log_event(self.logger, "queue.processing", 
-                         f"Processing message content: {request['content']} "
-                         f"(was position {queue_position})", level="DEBUG")
-                response = await self.process_message(
-                    content=request["content"],
-                    sender=request["sender"],
-                    conversation_id=request["conversation_id"]
-                )
-                
-                # Complete the future with the response
-                if request["id"] in self.pending_requests:
-                    self.pending_requests[request["id"]].set_result(response)
-                    log_event(self.logger, "queue.completed", 
-                             f"Request {request['id']} processed successfully "
-                             f"(was position {queue_position}/{current_queue_size})")
-                    del self.pending_requests[request["id"]]
-                    
-            except Exception as e:
-                log_error(self.logger, 
-                         f"Error processing request {request['id']} "
-                         f"(was position {queue_position}/{current_queue_size}): {str(e)}", 
-                         exc_info=e)
-                if request["id"] in self.pending_requests:
-                    self.pending_requests[request["id"]].set_exception(e)
-                    del self.pending_requests[request["id"]]
-            finally:
-                if self.status != AgentStatus.SHUTTING_DOWN:
-                    await self.set_status(AgentStatus.IDLE, "end processing queue")
+        """Base Agent process for processing any pending requests in the queue"""
+        return await process_queue_impl(self)
 
     async def set_status(self, new_status: AgentStatus, trigger: str) -> None:
         """Update agent status with validation and logging."""

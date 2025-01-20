@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "first memetic agent"
+name = "memetic-agents"
 version = "0.1.0"
-description = ""
+description = "A system of agents that can learn and evolve through social interaction"
 authors = ["Shannon Gray <shanngray@icloud.com>"]
 license = "MIT License"
 readme = "README.md"

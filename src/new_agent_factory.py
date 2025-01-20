@@ -1,11 +1,16 @@
 import os
+import sys
 import shutil
 from pathlib import Path
 from typing import Dict
 import inquirer
-from src.base_agent.config import AgentConfig
-from src.memetic_agent.memetic_agent import MemeticAgent
 from chromadb import PersistentClient
+
+sys.path.append(str(Path(__file__).parents[1]))
+
+from base_agent.config import AgentConfig
+from memetic_agent.memetic_agent import MemeticAgent
+
 
 def create_agent_folder_structure(agent_name: str) -> Path:
     """Create the required folder structure for a new agent."""
@@ -52,7 +57,7 @@ def get_agent_config_from_user() -> Dict:
     answers = inquirer.prompt(questions)
     return answers
 
-def create_new_agent(chroma_client: PersistentClient) -> None:
+def create_new_agent() -> None:
     """Create a new agent based on user input and generate its creation script."""
     # Get configuration from user
     config_data = get_agent_config_from_user()
@@ -104,3 +109,6 @@ def create_{config_data["agent_name"].lower()}_agent(chroma_client: PersistentCl
     print(f"\nAgent {config_data['agent_name']} created successfully!")
     print(f"You can find the agent's prompt files in: {agent_path}")
     print(f"Agent creation script generated at: {script_path}")
+
+if __name__ == "__main__":
+    create_new_agent()

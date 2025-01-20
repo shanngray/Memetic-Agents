@@ -7,10 +7,11 @@ from src.log_config import log_event
 from src.base_agent.models import Message
 
 async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
-    """Process received message from another agent."""
+    """Memetic Agent process for receiving message from another agent."""
     sender = message.sender
     content = message.content
     conversation_id = message.conversation_id
+    prompt = getattr(message, 'prompt', None)
     await agent.set_status(AgentStatus.MESSAGE_RECEIVED, "processing received message")
     log_event(agent.logger, "agent.message_received", 
               f"Message from {sender} in conversation {conversation_id}")
@@ -53,6 +54,7 @@ async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
         "id": request_id,
         "sender": sender,
         "content": content,
+        "prompt": prompt,
         "conversation_id": conversation_id,
         "timestamp": datetime.now().isoformat(),
         "queue_position": queue_position

@@ -553,16 +553,12 @@ async def start_agent_server(agent: BaseAgent, port: int) -> asyncio.Task:
     async def receive_endpoint(message: APIMessage):
         """Handle incoming messages for the agent."""
         try:
-            response = await agent.receive_message(
-                sender=message.sender,
-                content=message.content,
-                conversation_id=message.conversation_id
-            )
+            response = await agent.receive_message(message = message)
             return AgentResponse(success=True, message=response)
         except asyncio.TimeoutError:
             raise HTTPException(status_code=408, detail="Request timeout")
         except Exception as e:
-            agent.logger.error(f"Error processing message: {str(e)}")
+            agent.logger.error(f"Error processing message: {str(e)}")  # Use agent.logger directly
             raise HTTPException(status_code=500, detail=str(e))
 
     @agent_app.post("/feedback")

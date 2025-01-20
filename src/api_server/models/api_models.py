@@ -118,17 +118,31 @@ class PromptModel(BaseModel):
 
 class SocialMessage(APIMessage):
     """
-    Represents a social message between agents that may contain an optional PromptModel.
+    Represents a social message between agents that contains a PromptModel.
+    A SocialMessage is always created with a prompt, which distinguishes it from a regular APIMessage.
     """
-    prompt: Optional[PromptModel] = Field(default=None, description="The prompt being shared between agents")
+    prompt: PromptModel = Field(..., description="The prompt being shared between agents")
 
     @classmethod
-    def create(cls, sender: str, receiver: str, content: str, conversation_id: str, prompt: Optional[PromptModel] = None) -> "SocialMessage":
+    def create_with_prompt(cls, sender: str, receiver: str, content: str, conversation_id: str, prompt: PromptModel) -> "SocialMessage":
+        """
+        Factory method to create a social message with required prompt and current timestamp.
+        
+        Args:
+            sender: Identifier of the sending agent
+            receiver: Identifier of the receiving agent
+            content: Message content
+            conversation_id: Unique conversation identifier
+            prompt: PromptModel instance that will be shared
+            
+        Returns:
+            SocialMessage: Newly created message instance with prompt
+        """
         return cls(
             sender=sender,
             receiver=receiver,
             content=content,
+            timestamp=datetime.utcnow().isoformat(),
             conversation_id=conversation_id,
-            prompt=prompt,
-            timestamp=datetime.utcnow().isoformat()
+            prompt=prompt
         )

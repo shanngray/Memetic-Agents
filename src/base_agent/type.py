@@ -52,7 +52,7 @@ class Agent:
         self._xfer_feedback_prompt = "Placeholder for transferring feedback"
         self._reflect_feedback_prompt = "Placeholder for reflecting on feedback"
         self._evaluator_prompt = "Placeholder for evaluating prompts"
-        self._reasoning_module = "Placeholder for reasoning module"
+        self._reasoning_prompt = "Placeholder for reasoning module"
         self._reflect_memories_prompt = "Placeholder for reflecting on memories"
         self._self_improvement_prompt = "Placeholder for self improvement"
 
@@ -81,7 +81,7 @@ class Agent:
         """Returns a mapping of prompt names to their current values."""
         return {
             "system_prompt": self._system_prompt,
-            "reasoning_module": self._reasoning_module,
+            "reasoning_prompt": self._reasoning_prompt,
             "give_feedback_prompt": self._give_feedback_prompt,
             "reflect_feedback_prompt": self._reflect_feedback_prompt,
             "reflect_memories_prompt": self._reflect_memories_prompt,
@@ -107,13 +107,11 @@ class Agent:
         """
         raise NotImplementedError("Subclasses must implement process_message")
 
-    async def receive_message(self, sender: str, content: str, conversation_id: str) -> str:
+    async def receive_message(self, message: APIMessage) -> str:
         """Handle an incoming message from another agent.
 
         Args:
-            sender: ID of the sending agent
-            content: Message content
-            conversation_id: ID of the conversation thread
+            message: APIMessage containing sender, content, and conversation_id
 
         Returns:
             str: Response message content

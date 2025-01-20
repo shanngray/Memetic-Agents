@@ -14,14 +14,20 @@ from typing import List, Dict, Any
 import uuid
 import asyncio
 # Add project root to path
-sys.path.append(str(Path(__file__).parents[3]))
+sys.path.append(str(Path(__file__).parents[2]))
 
+from src.log_config import log_event
 from base_agent.base_agent import BaseAgent
 from base_agent.config import AgentConfig
 from base_agent.models import Message
 from base_agent.models import AgentStatus
+from src.api_server.models.api_models import PromptModel
 from .modules.start_socialising_impl import start_socialising_impl
-from .modules.route_incoming_message import route_incoming_message
+from .modules.receive_message_impl import receive_message_impl
+from .modules.process_queue_impl import process_queue_impl
+from .modules.process_message_impl import process_message_impl
+from .modules.process_social_message_impl import process_social_message_impl
+
 #TODO: Memetic agent will have a series of modules that make up its system prompt. Some modules will be updated sub consciously via memory and others it will
 # have conscious control over.
 #It will also be able to create new modules.
@@ -34,7 +40,7 @@ class MemeticAgent(BaseAgent):
         self.prompt_path = Path("agent_files") / self.config.agent_name / "prompt_modules"
         self.prompt_path.mkdir(parents=True, exist_ok=True)
 
-        self._reasoning_module_path = self.prompt_path / "reasoning_module.md"
+        self._reasoning_module_path = self.prompt_path / "reasoning_prompt.md"
         self._give_feedback_module_path = self.prompt_path / "give_feedback_prompt.md"
         self._thought_loop_module_path = self.prompt_path / "thought_loop_prompt.md"
         self._xfer_long_term_module_path = self.prompt_path / "xfer_long_term_prompt.md"
@@ -47,29 +53,29 @@ class MemeticAgent(BaseAgent):
 
         #TODO System prompt is currently loaded via config ... this should be made consistent with the sub modules
         # Path to system prompt
-        self.system_path = self.prompt_path / "system_prompt.md"
+        self.system_path = self.prompt_path / "sys_prompt.md"
         
         # Load sub modules
-        self._reasoning_module = self._load_module(self._reasoning_module_path)
+        self._reasoning_prompt = self._load_module(self._reasoning_module_path)
         self._give_feedback_prompt = self._load_module(self._give_feedback_module_path)
         self._thought_loop_prompt = self._load_module(self._thought_loop_module_path)
         self._xfer_long_term_prompt = self._load_module(self._xfer_long_term_module_path)
         self._self_improvement_prompt = self._load_module(self._self_improvement_module_path)
         self._reflect_memories_prompt = self._load_module(self._reflect_memories_module_path)
         self._evaluator_prompt = self._load_module(self._evaluator_module_path)
-        
+
         self._xfer_long_term_schema = self._load_module(self._xfer_long_term_schema_path)
         self._reflect_memories_schema = self._load_module(self._reflect_memories_schema_path)
         
         # Add reasoning-related tool to internal_tools dictionary
         self.internal_tools.update({
-            "update_reasoning_module": self.update_reasoning_module,
+            "update_prompt_module": self.update_prompt_module,
             "update_system_prompt": self.update_system_prompt
         })
 
         # Register the new internal tools
         for tool_name, tool_func in {
-            "update_reasoning_module": self.update_reasoning_module,
+            "update_prompt_module": self.update_prompt_module,
             "update_system_prompt": self.update_system_prompt
         }.items():
             self.tool_mod.register(tool_func)
@@ -120,19 +126,51 @@ class MemeticAgent(BaseAgent):
             module_path.write_text(default_contents, encoding="utf-8")
             return default_contents
 
-    async def update_reasoning_module(self, new_reasoning: str) -> str:
-        """Update the reasoning module that guides your thinking process."""
+    async def update_prompt_module(self, prompt_type: str, new_prompt: str) -> str:
+        """Update a specific prompt module.
+        
+        Args:
+            prompt_type: Type of prompt to update (reasoning, give_feedback, thought_loop, etc.)
+            new_prompt: The new prompt content
+        
+        Returns:
+            str: Success message
+        
+        Raises:
+            ValueError: If prompt type is invalid or update fails
+        """
         try:
-            with FileLock(f"{self._reasoning_module_path}.lock"):
-                self._reasoning_module_path.write_text(new_reasoning, encoding="utf-8")
-            self._reasoning_module = new_reasoning
+            # Map prompt_type to corresponding path and variable
+            prompt_map = {
+                "reasoning": (self._reasoning_module_path, "_reasoning_prompt"),
+                "give_feedback": (self._give_feedback_module_path, "_give_feedback_prompt"),
+                "thought_loop": (self._thought_loop_module_path, "_thought_loop_prompt"),
+                "xfer_long_term": (self._xfer_long_term_module_path, "_xfer_long_term_prompt"),
+                "self_improvement": (self._self_improvement_module_path, "_self_improvement_prompt"),
+                "reflect_memories": (self._reflect_memories_module_path, "_reflect_memories_prompt"),
+                "evaluator": (self._evaluator_module_path, "_evaluator_prompt")
+            }
             
-            # Update system prompt with new reasoning module
-            await self._update_system_with_reasoning()
-            return "Reasoning module updated successfully"
+            if prompt_type not in prompt_map:
+                raise ValueError(f"Invalid prompt type: {prompt_type}. Valid types are: {', '.join(prompt_map.keys())}")
+            
+            path, var_name = prompt_map[prompt_type]
+            
+            # Update file
+            with FileLock(f"{path}.lock"):
+                path.write_text(new_prompt, encoding="utf-8")
+            
+            # Update instance variable
+            setattr(self, var_name, new_prompt)
+            
+            # If updating reasoning module, update system prompt
+            if prompt_type == "reasoning":
+                await self._update_system_with_reasoning()
+                
+            return f"{prompt_type} module updated successfully"
             
         except Exception as e:
-            raise ValueError(f"Failed to update reasoning module: {str(e)}")
+            raise ValueError(f"Failed to update {prompt_type} module: {str(e)}")
 
     async def _update_system_with_reasoning(self) -> None:
         """Update system message with current reasoning module."""
@@ -143,7 +181,7 @@ class MemeticAgent(BaseAgent):
                 None
             )
             
-            new_content = f"{self._system_prompt}\n\nReasoning Module:\n{self._reasoning_module}"
+            new_content = f"{self._system_prompt}\n\nReasoning Module:\n{self._reasoning_prompt}"
             
             if system_message:
                 system_message.content = new_content
@@ -162,7 +200,7 @@ class MemeticAgent(BaseAgent):
         system_prompt = (
             f"{self._system_prompt}\n\n"
             f"Available tools:\n{tools_desc}\n\n"
-            f"Reasoning Module:\n{self._reasoning_module}"
+            f"Reasoning Module:\n{self._reasoning_prompt}"
         )
         self._system_prompt = system_prompt
         
@@ -233,8 +271,8 @@ class MemeticAgent(BaseAgent):
             if new_status == AgentStatus.LEARNING:
                 asyncio.create_task(self._run_learning_subroutine())
 
-    async def receive_message(self, sender: str, content: str, conversation_id: str) -> str:
-        return await route_incoming_message(self, sender, content, conversation_id)
+    async def receive_message(self, message: APIMessage) -> str:
+        return await receive_message_impl(self, message)
 
     async def _transfer_to_long_term(self, days_threshold: int = 0) -> None:
         """Transfer short-term memories into long-term storage as atomic memories with SPO metadata.
@@ -535,7 +573,7 @@ class MemeticAgent(BaseAgent):
             case "thought loop":
                 existing_prompt = self._thought_loop_prompt
             case "reasoning":
-                existing_prompt = self._reasoning_module
+                existing_prompt = self._reasoning_prompt
             case "self improvement":
                 existing_prompt = self._self_improvement_prompt
             case "insight":
@@ -624,7 +662,7 @@ class MemeticAgent(BaseAgent):
                 case "thought loop":
                     self._thought_loop_prompt = improved_prompt
                 case "reasoning":
-                    self._reasoning_module = improved_prompt
+                    self._reasoning_prompt = improved_prompt
                 case "self improvement":
                     self._self_improvement_prompt = improved_prompt
 
@@ -697,6 +735,17 @@ class MemeticAgent(BaseAgent):
     async def start_socialising(self) -> Dict[str, Any]:
         """Start socialising with another agent."""
         return await start_socialising_impl(self)
+
+    async def process_queue(self):
+        """Memetic Agent process for processing any pending requests in the queue"""
+        return await process_queue_impl(self)
+
+    async def process_message(self, content: str, sender: str, prompt: PromptModel, conversation_id: str) -> str:
+        """Memetic Agent process for processing a message"""
+        if prompt is not None:
+            return await process_social_message_impl(self, content, sender, prompt, conversation_id)
+        else:
+            return await process_message_impl(self, content, sender, conversation_id)
 
 #TODO: This agent needs to eb able to call up things liek its architecture or curent prompts 
 # so that it can use them when reflecting on memories.

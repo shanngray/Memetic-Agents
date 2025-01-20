@@ -23,7 +23,7 @@ class Message(BaseModel):
         receiver: Optional receiver for function calls
         timestamp: Optional timestamp for function calls
     """
-    role: str = Field(..., description="Role of the message sender")
+    role: str = Field(..., description="Role of the message sender (system, user, assistant, function)")
     content: str = Field(..., description="Message content")
     name: Optional[str] = Field(None, description="Name for function calls")
     tool_calls: Optional[List[ToolCall]] = Field(None, description="Tool calls made by assistant")

@@ -4,20 +4,15 @@ from src.api_server.models.api_models import SocialMessage, PromptModel
 import uuid
 from datetime import datetime
 
-async def receive_social_message(agent: BaseAgent, sender: str, content: str, message: SocialMessage) -> str:
+async def receive_social_message(agent: BaseAgent, message: SocialMessage) -> str:
     """Process incoming social messages containing prompts for review"""
-    
-    #1) We need a new prompt to evaluate the shared prompt
-    #2) We need to construct an LLM call using the new system prompt,
-    #   the shared prompt, the agent's own version of the shared prompt, 
-    #   and the message that was sent with it.
-    #3) We need to send a response back to the sender with the evaluation
-    #4) We need to decide if the receiving agent will also potentially update its prompt or will it continue
-    #   the conversation with the sender first.
-    #5) Do we use multiple prompts or just one? if just one, how does it decide when to make changes to its prompt?
 
     #TODO: We need to decide if the receiving agent will also potentially update its prompt or will it continue
     # Log the social interaction
+    sender = message.sender
+    content = message.content
+    conversation_id = message.conversation_id
+    
     log_event(agent.logger, "social.receive", 
              f"Received social message from {sender} about prompt: {message.prompt.prompt_type}")
 
