@@ -14,7 +14,7 @@ class MemoryManager:
         self.memory_client = chroma_client
         self.collections: Dict[str, Collection] = {}
         log_event(self.logger, "memory.installed", 
-                 f"Installed memory module for {self.agent_name}")
+                 f"Installed memory collections for {self.agent_name}: {self.collections}")
 
     async def initialize(self, collection_names: List[str] = ["short_term", "long_term"]) -> None:
         """Initialize the ChromaDB memory store with specified collections."""

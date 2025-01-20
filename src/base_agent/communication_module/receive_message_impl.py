@@ -5,6 +5,7 @@ from src.base_agent.models import AgentStatus
 from src.base_agent.type import Agent
 from src.log_config import log_event    
 from src.base_agent.models import Message
+from src.api_server.models.api_models import APIMessage
 
 async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
     """Process received message from another agent."""

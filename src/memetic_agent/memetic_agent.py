@@ -21,7 +21,7 @@ from base_agent.base_agent import BaseAgent
 from base_agent.config import AgentConfig
 from base_agent.models import Message
 from base_agent.models import AgentStatus
-from src.api_server.models.api_models import PromptModel
+from src.api_server.models.api_models import PromptModel, APIMessage
 from .modules.start_socialising_impl import start_socialising_impl
 from .modules.receive_message_impl import receive_message_impl
 from .modules.process_queue_impl import process_queue_impl

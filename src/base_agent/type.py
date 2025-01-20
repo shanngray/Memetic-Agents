@@ -11,6 +11,7 @@ from chromadb import PersistentClient
 from .models import Message, AgentStatus
 from .config import AgentConfig
 from src.log_config import setup_logger
+from src.api_server.models.api_models import APIMessage
 
 
 class Agent:

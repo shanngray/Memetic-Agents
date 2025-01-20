@@ -23,6 +23,7 @@ import contextvars
 # Add the project root directory to the Python path
 sys.path.append(str(Path(__file__).parents[2]))
 
+from .type import Agent
 from .models import Message, ToolCall, AgentStatus, Request
 from .config import AgentConfig
 from api_server.models.api_models import APIMessage
@@ -34,7 +35,7 @@ from src.base_agent.communication_module.process_message_impl import process_mes
 from src.base_agent.communication_module.send_message_impl import send_message_impl
 from src.base_agent.feedback_module.give_feedback import evaluate_response_impl, evaluate_and_send_feedback_impl
 from src.base_agent.feedback_module.accept_feedback import receive_feedback_impl, process_feedback_impl
-from .type import Agent  # Add this import at the top
+from src.base_agent.communication_module.process_queue_impl import process_queue_impl
 
 class BaseAgent(Agent):  # Change to inherit from Agent
     def __init__(
