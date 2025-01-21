@@ -157,6 +157,13 @@ EVENT_EMOJIS = {
     "status.update.forward": "🔄 ➤➤",
     "status.update.success": "🔄✅",
     "status.update.error": "🔄❌",
+    # New memory events
+    "memory.init.start": "🧠🔄",
+    "memory.init.complete": "🧠✅",
+    "memory.load.start": "💾🔄",
+    "memory.load.complete": "💾✅",
+    "memory.collection.created": "📁✨",
+    "memory.collection.exists": "📁✓"
 }
 
 def log_event(logger: logging.Logger, event_type: str, details: str, level: str = "INFO") -> None:
@@ -199,14 +206,14 @@ def log_error(logger: logging.Logger, message: str, exc_info: Optional[Exception
 
 
 '''
-Here’s a breakdown of when to use each level and what types of messages they display:
+Here's a breakdown of when to use each level and what types of messages they display:
 
 	1.	DEBUG (logging.DEBUG)
 	•	Purpose: Use DEBUG for low-level information meant for developers to diagnose issues or understand the internal state of the application.
 	•	Messages Visible: DEBUG, INFO, WARNING, ERROR, CRITICAL
 	•	Example Use: Tracking variable values, flow through functions, or confirming specific conditions met in code.
 	2.	INFO (logging.INFO)
-	•	Purpose: Use INFO to record general events in the application’s flow, typically milestones or key points in processing that are helpful for understanding normal operation.
+	•	Purpose: Use INFO to record general events in the application's flow, typically milestones or key points in processing that are helpful for understanding normal operation.
 	•	Messages Visible: INFO, WARNING, ERROR, CRITICAL
 	•	Example Use: Start and end of main operations, successful connections, or user actions that indicate progression through the application.
 	3.	WARNING (logging.WARNING)

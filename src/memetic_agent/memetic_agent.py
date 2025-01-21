@@ -35,8 +35,9 @@ from .modules.process_social_message_impl import process_social_message_impl
 class MemeticAgent(BaseAgent):
     def __init__(self, api_key: str, chroma_client: PersistentClient, config: AgentConfig = None):
         """Initialize MemeticAgent with reasoning capabilities."""
+        # Initialize base collections first
         super().__init__(api_key=api_key, chroma_client=chroma_client, config=config)
-      
+        
         self.prompt_path = Path("agent_files") / self.config.agent_name / "prompt_modules"
         self.prompt_path.mkdir(parents=True, exist_ok=True)
 
@@ -82,11 +83,6 @@ class MemeticAgent(BaseAgent):
 
         # Update system prompt with reasoning module
         self._initialize_system_prompt()
-
-        # Initialize memory collections - only add the new 'reflections' collection
-        asyncio.create_task(self.memory.initialize(
-            collection_names=["reflections"]
-        ))
 
     def _get_tool_descriptions(self) -> str:
         """Get formatted descriptions of all available tools."""
@@ -746,6 +742,25 @@ class MemeticAgent(BaseAgent):
             return await process_social_message_impl(self, content, sender, prompt, conversation_id)
         else:
             return await process_message_impl(self, content, sender, conversation_id)
+
+    async def start(self):
+        """Start the agent's main processing loop and initialise memories"""
+        self.logger.info(f"Starting {self.config.agent_name} processing loop")
+        
+        # Initialize and load memory collections before starting the processing loop
+        # Include memetic-specific collections
+        await self._initialize_and_load_memory_collections(
+            ["short_term", "long_term", "feedback", "reflections"]
+        )
+        
+        while not self._shutdown_event.is_set():
+            try:
+                await self.process_queue()
+                await asyncio.sleep(0.1)  # Prevent CPU spinning
+            except Exception as e:
+                self.logger.error(f"Error in processing loop: {str(e)}")
+                if self.status != AgentStatus.SHUTTING_DOWN:
+                    await self.set_status(AgentStatus.IDLE, "start")
 
 #TODO: This agent needs to eb able to call up things liek its architecture or curent prompts 
 # so that it can use them when reflecting on memories.

@@ -143,14 +143,6 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             chroma_client=chroma_client
         )
         
-        # Initialize collections including feedback
-        asyncio.create_task(self.memory.initialize(
-            collection_names=["short_term", "long_term", "feedback"]
-        ))
-        
-        # Load existing memory
-        self._load_memory()
-        
         # Register shutdown handlers
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
@@ -322,25 +314,28 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         """Process and store received feedback from another agent."""
         return await receive_feedback_impl(self, sender, conversation_id, score, feedback)
 
-    def _load_memory(self) -> None:
+    async def _load_memory(self) -> None:
         """Load short term memories into conversations and list of long term memories into old_conversation_list."""
         try:
+            log_event(self.logger, "memory.load.start", "Beginning memory load process")
+            
             # Initialize empty containers
             self.conversations = {}
             self.old_conversation_list = {}
             
-            # Check if short-term collection exists
-            if "short_term" not in self.memory.collections:
-                log_event(self.logger, "memory.init", 
-                         "No short-term memory collection found - starting fresh")
-                return
-            
+            collection_names = self.memory.collections.keys()
+
+            # Ensure collections are initialized before proceeding
+            for collection_name in collection_names:
+                if collection_name not in self.memory.collections:
+                    raise ValueError(f"Collection '{collection_name}' not found. Available collections: {list(self.memory.collections.keys())}")
+
             # Part 1: Load conversations from short-term memory
             short_term_collection = self.memory._get_collection("short_term")
             results = short_term_collection.get()
             
             if not results["documents"]:
-                log_event(self.logger, "memory.init", 
+                log_event(self.logger, "memory.load.complete", 
                          "Short-term memory collection is empty - starting fresh")
                 return
             
@@ -364,16 +359,16 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                         conversation_groups[conv_id]["timestamps"].append(metadata["timestamp"])
 
             # Convert grouped content into conversations
+            loaded_conversations = 0
             for conv_id, group in conversation_groups.items():
-                # Start with system prompt
-                messages = [Message(role="system", content=self._system_prompt)]
-                
-                # Combine all content for this conversation
-                combined_content = "\n".join(group["content"])
-                
-                # Parse the combined content into messages
                 try:
-                    # Split content into message chunks and convert to Message objects
+                    # Start with system prompt
+                    messages = [Message(role="system", content=self._system_prompt)]
+                    
+                    # Combine all content for this conversation
+                    combined_content = "\n".join(group["content"])
+                    
+                    # Parse the combined content into messages
                     message_chunks = combined_content.split("\n")
                     for chunk in message_chunks:
                         if chunk.strip():
@@ -396,6 +391,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                             ))
                 
                     self.conversations[conv_id] = messages
+                    loaded_conversations += 1
                     log_event(self.logger, "memory.loaded", 
                              f"Loaded conversation {conv_id} with {len(messages)} messages")
                     
@@ -420,6 +416,9 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             else:
                 # Initialize empty if file doesn't exist
                 self.old_conversation_list = {}
+
+            log_event(self.logger, "memory.load.complete", 
+                     f"Successfully loaded {loaded_conversations} conversations")
 
         except Exception as e:
             log_error(self.logger, "Failed to load memory", exc_info=e)
@@ -556,9 +555,9 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         """Start the agent's main processing loop and initialise memories"""
         self.logger.info(f"Starting {self.config.agent_name} processing loop")
         
-        # Initialize memory collections
-        await self.memory.initialize()
-
+        # Initialize and load memory collections before starting the processing loop
+        await self._initialize_and_load_memory_collections(["short_term", "long_term", "feedback"])
+        
         while not self._shutdown_event.is_set():
             try:
                 await self.process_queue()
@@ -859,3 +858,18 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         
         """
         return await process_feedback_impl(self, days_threshold)
+
+    async def _initialize_and_load_memory_collections(self, collections: List[str]):
+        """Initialize all required memory collections."""
+        
+        try:
+            await self.memory.initialize(collection_names=collections)
+            log_event(self.logger, "memory.installed", 
+                     f"Initialized base collections for {self.config.agent_name}")
+            
+            # Load existing memory
+            await self._load_memory()
+            
+        except Exception as e:
+            log_error(self.logger, f"Failed to initialize & load memory collections: {str(e)}")
+
