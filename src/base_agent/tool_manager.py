@@ -60,7 +60,7 @@ class ToolManager:
             
             self.internal_tools[tool_name] = tool
             self.tools[tool_name] = tool_def
-            log_event(self.agent.logger, "tool.registered", f"Registered internal tool: {tool_name}")
+            log_event(self.agent.logger, "tool.registered", f"Registered internal tool: {tool_name}", level="DEBUG")
             
         else:
             # Handle external tool definition (existing logic)
@@ -82,14 +82,14 @@ class ToolManager:
             tool_name = tool["function"]["name"]
             if tool_name in self.internal_tools:
                 log_event(self.agent.logger, "tool.warning", 
-                         f"External tool {tool_name} will not override existing internal method")
+                         f"External tool {tool_name} will not override existing internal method", level="WARNING")
                 return
             
             if tool_name in self.tools:
                 raise ValueError(f"Tool {tool_name} already registered")
                 
             self.tools[tool_name] = tool
-            log_event(self.agent.logger, "tool.registered", f"Registered external tool: {tool_name}")
+            log_event(self.agent.logger, "tool.registered", f"Registered external tool: {tool_name}", level="DEBUG")
         
     async def execute(self, tool_call: ToolCall) -> Dict[str, Any]:
         """Execute a tool call and return the result."""
@@ -97,7 +97,8 @@ class ToolManager:
         tool_args = tool_call.function["arguments"]
         
         log_event(self.agent.logger, "tool.executing", 
-                  f"Starting execution of tool: {tool_name}", level="DEBUG")
+                  f"Starting execution of tool: {tool_name}", 
+                  level="DEBUG")
         
         if tool_name not in self.tools:
             error_msg = f"Unknown tool: {tool_name}"
@@ -107,14 +108,16 @@ class ToolManager:
         try:
             # Load the tool
             log_event(self.agent.logger, "tool.loading", 
-                     f"Loading tool implementation: {tool_name}", level="DEBUG")
+                     f"Loading tool implementation: {tool_name}", 
+                     level="DEBUG")
             tool_func = await self.load(tool_name)
             
             # Parse arguments
             try:
                 args = json.loads(tool_args)
                 log_event(self.agent.logger, "tool.executing", 
-                         f"Parsed arguments for {tool_name}: {args}", level="DEBUG")
+                         f"Parsed arguments for {tool_name}: {args}", 
+                         level="DEBUG")
             except json.JSONDecodeError as e:
                 error_msg = f"Invalid tool arguments: {tool_args}"
                 log_event(self.agent.logger, "tool.error", error_msg, level="ERROR")
@@ -141,7 +144,7 @@ class ToolManager:
             log_error(self.agent.logger, error_msg, exc_info=e)
             raise ToolError(error_msg)
         finally:
-            log_event(self.agent.logger, "tool.status", f"Setting status to PROCESSING after tool execution")
+            log_event(self.agent.logger, "tool.complete", f"Tool execution complete")
         
     async def load(self, tool_name: str) -> Callable:
         """Load a tool by name, preferring internal tools over external ones.

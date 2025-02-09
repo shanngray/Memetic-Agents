@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 import inquirer
 from chromadb import PersistentClient
+import json
 
 sys.path.append(str(Path(__file__).parents[1]))
 
@@ -16,9 +17,11 @@ def create_agent_folder_structure(agent_name: str) -> Path:
     """Create the required folder structure for a new agent."""
     base_path = Path("agent_files") / agent_name
     prompt_modules_path = base_path / "prompt_modules"
+    scores_path = prompt_modules_path / "scores"
     
     # Create directories
     prompt_modules_path.mkdir(parents=True, exist_ok=True)
+    scores_path.mkdir(parents=True, exist_ok=True)
     
     # Copy base prompt templates
     base_prompts_path = Path("src/system_prompt_templates")
@@ -28,6 +31,10 @@ def create_agent_folder_structure(agent_name: str) -> Path:
     base_schemas_path = Path("src/system_prompt_templates/schemas")
     for schema_file in base_schemas_path.glob("*.json"):
         shutil.copy2(schema_file, prompt_modules_path / schema_file.name)
+    
+    # Write confidence scores to new location
+    confidence_scores_path = scores_path / "prompt_confidence_scores.json"
+    confidence_scores_path.write_text(json.dumps(default_scores, indent=4), encoding="utf-8")
     
     return base_path
 

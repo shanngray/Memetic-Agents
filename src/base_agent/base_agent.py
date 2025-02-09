@@ -19,6 +19,7 @@ from chromadb import PersistentClient
 from filelock import FileLock
 from icecream import ic
 import contextvars
+import threading
 
 # Add the project root directory to the Python path
 sys.path.append(str(Path(__file__).parents[2]))
@@ -45,6 +46,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         config: Optional[AgentConfig] = None
     ):
         """Initialize the base agent with OpenAI client and configuration."""
+       
         # Call parent class init first
         super().__init__(api_key, chroma_client, config)
         
@@ -57,6 +59,10 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         )
         
         self._setup_logging()
+
+        # Log initialization with process/thread info
+        log_event(self.logger, "agent.init", 
+                 f"Initializing {self.__class__.__name__} (PID: {os.getpid()}, Thread: {threading.current_thread().name})")
 
         # Load System Prompts
         self._system_prompt = self.config.system_prompt
@@ -147,6 +153,10 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
 
+    async def initialize(self) -> None:
+        """Implemented in MemeticAgent only. Run from server.py"""
+        pass
+
     def _setup_logging(self) -> None:
         """Configure logging if debug is enabled."""
         if self.config.debug:
@@ -182,13 +192,13 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                 if not tool_path.exists():
                     raise ToolError(f"Tool definition not found: {tool_path}")
 
-                log_event(self.logger, "tool.loading", f"Loading tool definition: {tool_path}")
+                log_event(self.logger, "tool.loading", f"Loading tool definition: {tool_path}", level="DEBUG")
                 with open(tool_path) as f:
                     tool_def = json.load(f)
                     self.tool_mod.register(tool_def)
                     
             except Exception as e:
-                log_event(self.logger, "tool.error", f"Failed to load tool {tool_name}: {str(e)}")
+                log_event(self.logger, "tool.error", f"Failed to load tool {tool_name}: {str(e)}", level="ERROR")
 
     def register_tools(self, tools: List[Dict[str, Any]]) -> None:
         """Register multiple tools/functions that the agent can use.
@@ -565,7 +575,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             except Exception as e:
                 self.logger.error(f"Error in processing loop: {str(e)}")
                 if self.status != AgentStatus.SHUTTING_DOWN:
-                    await self.set_status(AgentStatus.IDLE, "start")
+                    await self.set_status(AgentStatus.AVAILABLE, "start")
 
     async def process_queue(self):
         """Base Agent process for processing any pending requests in the queue"""
@@ -581,7 +591,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             
             if new_status not in valid_transitions:
                 raise ValueError(
-                    f"Invalid status transition from {self.status} to {new_status} caused by {trigger}"
+                    f"Invalid status transition from {self.status.name} to {new_status.name} caused by {trigger}"
                 )
 
             self._previous_status = self.status
@@ -595,7 +605,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             log_event(
                 self.logger,
                 f"agent.{self.status}",
-                f"Status changed: {self._previous_status} -> {self.status} ({trigger})"
+                f"Status changed: {self._previous_status.name} -> {self.status.name} ({trigger})"
             )
             
             # Trigger memory consolidation when entering MEMORISING state
@@ -765,6 +775,13 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                            Default is "short_term".
         """
         try:
+            # Ensure days_threshold is an integer
+            try:
+                days_threshold = int(days_threshold)
+            except (TypeError, ValueError):
+                log_error(self.logger, f"Invalid days_threshold value: {days_threshold}. Using default of 0.")
+                days_threshold = 0
+
             log_event(self.logger, "memory.cleanup.start", 
                      f"Starting cleanup of {collection_name} memories older than {days_threshold} days")
             

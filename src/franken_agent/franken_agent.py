@@ -61,6 +61,10 @@ class FrankenAgent(BaseAgent):
         # Update system prompt with technique information
         self._initialize_system_prompt()
 
+    async def initialize(self) -> None:
+        """Implemented in MemeticAgent only. Run from server.py"""
+        pass
+
     @lru_cache(maxsize=3)
     def _get_technique_content(self, technique_name: str) -> str:
         """Load and cache technique content."""

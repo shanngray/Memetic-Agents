@@ -1,4 +1,5 @@
 import logging
+import logging.config
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -85,16 +86,19 @@ EVENT_EMOJIS = {
     "session.update": "🛠️",
     "session.created": "🔌",
     "session.updated": "🔄",
+    "session.started": "🎬",
+    "session.completed": "🏁",
+    "session.timeout": "⏰",
+    "session.iteration": "🔄",
     # Agent events
+    "agent.init": "🤖🚀",
     "agent.registered": "🤖📝",
     "agent.message_sent": "🤖💬",
     "agent.message_received": "🤖🗨️",
     "agent.tool_called": "🤖🔧",
     "agent.error": "🤖❌",
     # agent status events
-    "agent.idle": "🤖💤",
-    "agent.processing": "🤖💫",
-    "agent.waiting": "🤖🕒",
+    "agent.available": "🤖💤",
     "agent.learning": "🤖📚",
     "agent.shutting_down": "🤖🛑",
     "agent.memorising": "🤖💾",
@@ -103,22 +107,16 @@ EVENT_EMOJIS = {
     # Tool events
     "tool.success": "✅",
     "tool.error": "🔧❌",
-    # Directory service events
-    "directory.lookup": "🔍",
-    "directory.register": "📋",
-    "directory.route": "🔄",
-    # Additional WebSocket events
-    "session.started": "🎬",
-    "session.completed": "🏁",
-    "session.timeout": "⏰",
-    "session.iteration": "🔄",
-    # Additional Tool events
     "tool.loading": "📥",
     "tool.registered": "📝",
     "tool.executing": "⚙️",
     "tool.warning": "⚠️",
     "tool.installed": "🔧",
     "tool.called": "🔧",
+    # Directory service events
+    "directory.lookup": "🔍",
+    "directory.register": "📋",
+    "directory.route": "🔄",
     # Message events
     "message.content": "💬",
     # Memory events
@@ -140,6 +138,10 @@ EVENT_EMOJIS = {
     "server.request": "📨",
     "server.response": "📩",
     "server.error": "💥",
+    "server.status.update": "🔄📝",
+    "server.status.timeout": "🔄⏰",
+    "server.status.api": "🔄📩",
+    "server.status.error": "🔄❌",
     # Directory events
     "directory.startup": "📖",
     "directory.shutdown": "📕",
@@ -160,10 +162,28 @@ EVENT_EMOJIS = {
     # New memory events
     "memory.init.start": "🧠🔄",
     "memory.init.complete": "🧠✅",
+    "memory.transfer.content": "🧠🔄",
     "memory.load.start": "💾🔄",
     "memory.load.complete": "💾✅",
     "memory.collection.created": "📁✨",
-    "memory.collection.exists": "📁✓"
+    "memory.collection.exists": "📁✓",
+    # New social memory events
+    "social.conversation.new": "👥🆕",
+    "social.conversation.current": "👥🔄",
+    "social.conversation.short": "👥🔄",
+    "social.conversation.long": "👥🔄",
+    "social.prompt.update": "👥📝",
+    "social.prompt.evaluate": "👥🔍",
+    "social.prompt.evaluate.error": "👥🔍❌",
+    "social.message.sent": "👥💬",
+    "social.message.dequeue": "👥⬇️",
+    "social.message.response": "👥✅",
+    "social.lonely": "👥💔",
+
+    # Confidence score events
+    "confidence.evaluation": "🧠🔍",
+    "confidence.recorded": "🧠💾",  
+    "confidence.updated": "🧠🔄",
 }
 
 def log_event(logger: logging.Logger, event_type: str, details: str, level: str = "INFO") -> None:
@@ -175,6 +195,8 @@ def log_event(logger: logging.Logger, event_type: str, details: str, level: str 
         details: Event details
         level: Log level to use
     """
+    # Extract agent name from logger name and create abbreviation
+    agent_name = logger.name[:3].upper()
     emoji = EVENT_EMOJIS.get(event_type, "ℹ️")
     style = {
         "DEBUG": "dim",
@@ -184,7 +206,7 @@ def log_event(logger: logging.Logger, event_type: str, details: str, level: str 
     }.get(level.upper(), "default")
     
     log_func = getattr(logger, level.lower())
-    log_func(Text(f"{emoji} {details}", style=style))
+    log_func(Text(f"{emoji} [{agent_name}] {details}", style=style))
 
 # Convenience functions for common log types
 def log_tool_call(logger: logging.Logger, tool_name: str, args: dict, result: Optional[dict] = None) -> None:

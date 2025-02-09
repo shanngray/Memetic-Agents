@@ -53,34 +53,20 @@ class Message(BaseModel):
         return result
 
 class AgentStatus(IntEnum):
-    IDLE = 0
-    QUEUE_PROCESSING = 1
-    MESSAGE_RECEIVED = 2
-    MESSAGE_PROCESSING = 3
-    TOOL_EXECUTING = 4
-    WAITING_RESPONSE = 5
-    LEARNING = 6
-    MEMORISING = 7
-    SOCIALISING = 8
-    SHUTTING_DOWN = 9
+    AVAILABLE = 0
+    LEARNING = 1
+    MEMORISING = 2
+    SOCIALISING = 3
+    SHUTTING_DOWN = 4
 
     @classmethod
     def get_valid_transitions(cls, current_status: 'AgentStatus') -> Set['AgentStatus']:
         """Define valid status transitions."""
         VALID_TRANSITIONS = {
-            cls.IDLE: {cls.MESSAGE_RECEIVED, cls.LEARNING, 
-                      cls.MEMORISING, cls.SOCIALISING, cls.SHUTTING_DOWN},
-            cls.MESSAGE_RECEIVED: {cls.QUEUE_PROCESSING, cls.WAITING_RESPONSE, cls.SHUTTING_DOWN},
-            cls.QUEUE_PROCESSING: {cls.IDLE, cls.WAITING_RESPONSE, cls.MESSAGE_PROCESSING, cls.SHUTTING_DOWN},
-            cls.MESSAGE_PROCESSING: {cls.QUEUE_PROCESSING, cls.TOOL_EXECUTING, 
-                                   cls.WAITING_RESPONSE, cls.IDLE, cls.SHUTTING_DOWN},
-            cls.TOOL_EXECUTING: {cls.MESSAGE_PROCESSING, cls.WAITING_RESPONSE, cls.IDLE,
-                                cls.SHUTTING_DOWN},
-            cls.WAITING_RESPONSE: {cls.QUEUE_PROCESSING, cls.MESSAGE_PROCESSING, cls.TOOL_EXECUTING, 
-                                 cls.IDLE, cls.SHUTTING_DOWN},
-            cls.LEARNING: {cls.IDLE, cls.SHUTTING_DOWN},
-            cls.MEMORISING: {cls.IDLE, cls.LEARNING, cls.SHUTTING_DOWN},
-            cls.SOCIALISING: {cls.IDLE, cls.WAITING_RESPONSE, cls.SHUTTING_DOWN},
+            cls.AVAILABLE: {cls.LEARNING, cls.MEMORISING, cls.SOCIALISING, cls.SHUTTING_DOWN},
+            cls.LEARNING: {cls.AVAILABLE, cls.SHUTTING_DOWN},
+            cls.MEMORISING: {cls.AVAILABLE, cls.SHUTTING_DOWN},
+            cls.SOCIALISING: {cls.AVAILABLE, cls.SHUTTING_DOWN},
             cls.SHUTTING_DOWN: set()
         }
         return VALID_TRANSITIONS.get(current_status, set())

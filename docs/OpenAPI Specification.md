@@ -136,9 +136,7 @@ Enables performance feedback between agents:
 
 ### AgentStatus
 Defines possible agent states with valid transitions:
-- idle: Default state when not processing
-- processing: Actively handling a request
-- waiting: Waiting for external response
+- available: Default state when not processing
 - learning: Updating internal knowledge
 - shutting_down: Graceful shutdown in progress
 - memorising: Storing new information

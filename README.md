@@ -35,6 +35,46 @@ A multi-agent system that enables collaborative problem-solving through speciali
    TAVILY_API_KEY=your_tavily_key_here
    ```
 
+4. Create a `agent_files` directory:
+   ```bash
+   mkdir agent_files
+   ```
+
+## Creating New Agents
+
+The system provides an interactive agent factory to create new agents. To create a new agent:
+
+1. Run the agent factory script:
+   ```bash
+   poetry run python src/utils/new_agent_factory.py
+   ```
+
+2. Follow the interactive prompts to configure your agent:
+   - Agent name
+   - Description of agent's capabilities
+   - Model selection (default: gpt-4-mini)
+   - Console logging preference
+   - API port number (must be unique)
+   - Temperature setting (0.0-2.0)
+   - Enabled tools selection
+
+The factory will:
+- Create a folder structure in `agent_files/<agent_name>/`
+- Set up prompt modules and configuration files
+- Generate an agent creation script in `src/agents/`
+
+Example agent creation:
+```bash
+$ poetry run python src/utils/new_agent_factory.py
+? What is the name of your agent? ResearchAgent
+? Provide a brief description of your agent: Specialized in academic research and citation
+? Which model should the agent use? gpt-4-mini
+? Enable console logging? True
+? Which API port should the agent use? 8085
+? Set the temperature (0.0-2.0) 0.7
+? Select enabled tools (use space to select) ◉ agent_search ◉ list_agents ◉ web_search
+```
+
 ## Running the System
 
 The system requires two terminals to run:

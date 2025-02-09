@@ -41,10 +41,11 @@ async def evaluate_and_send_feedback_impl(
 async def evaluate_response_impl(agent: Agent, response_content: str) -> tuple[int, str]:
     """Evaluate response quality using LLM."""
     try:
+        full_prompt = agent._give_feedback_prompt + "\n\nFormat your response as a JSON object with the following schema:\n" + agent._give_feedback_schema
         response = await agent.client.chat.completions.create(
             model=agent.config.model,
             messages=[
-                {"role": "system", "content": agent._give_feedback_prompt},
+                {"role": "system", "content": full_prompt},
                 {"role": "user", "content": f"Response to evaluate:\n{response_content}"}
             ],
             response_format={ "type": "json_object" }

@@ -1,247 +1,605 @@
 from typing import Any, Dict, List
-from src.log_config import log_event, log_error, log_agent_message
-from src.base_agent.models import Message, ToolCall, AgentStatus
-from src.base_agent.tool_manager import ToolError
 import asyncio
 import uuid
 from datetime import datetime
 import json
 import asyncio
-from src.base_agent.type import Agent
-from src.api_server.models.api_models import PromptModel
+import httpx
 
-async def process_social_message_impl(agent: Agent, content: str, sender: str, prompt: PromptModel, conversation_id: str) -> str:
-    """Module for processing a social message"""
+from src.log_config import log_event, log_error, log_agent_message
+from src.base_agent.models import Message, ToolCall, AgentStatus
+from src.base_agent.tool_manager import ToolError
+from src.base_agent.type import Agent
+from src.api_server.models.api_models import PromptModel, PromptEvaluation, SocialMessage
+from src.memetic_agent.modules.normalise_score import normalise_score
+
+async def process_social_message_impl(agent: Agent, content: str, sender: str, prompt: PromptModel | None, evaluation: PromptEvaluation | None, message_type: str, conversation_id: str, request_id: str) -> str:
+    """Module for processing a social message. The sending agent and receving agent keep swapaping through out the interaction 
+    depending on who is processing the currect message. Will use the term First_Agent as the agent that initiated the social interaction.
+    The Second_Agent is the agent that is responding to the First_Agent's message.
+    """
+    log_event(agent.logger, "social.state", 
+             f"Starting social message processing - Type: {message_type}, Status: {agent.status.name}",
+             level="DEBUG")
+    
     if agent.status == AgentStatus.SHUTTING_DOWN:
         raise ValueError("Agent is shutting down")
 
-    await agent.set_status(AgentStatus.MESSAGE_PROCESSING, "processing social message")
     try:
         log_event(agent.logger, "session.started", 
-                    f"Processing social message from {sender} in conversation {conversation_id}")
+                    f"Processing social message from {sender} in conversation {conversation_id}",
+                    level="DEBUG")
         log_event(agent.logger, "message.content", f"Content: {content}", level="DEBUG")
 
         prompt_mapping = agent.get_prompt_mapping()
 
-        received_prompt = prompt.prompt
-        received_prompt_type = prompt.prompt_type
+        if message_type == "InitialPrompt": 
+            """First_Agent sent intial prompt with its initial PromptModel and Second_Agent is processing it.
+            The Second_Agent runs evaluate_prompt ONLY and sends back an PromptEvaluation and its own initial PromptModel
+            """
 
-        agents_version_of_prompt = prompt_mapping[received_prompt_type]
-
-        #TODO: Need to check for schema and insert where appropriate
-        combined_evalutor_prompt = (
-            f"{agent._evaluator_prompt}\n\nType of prompt being evaluated: {received_prompt_type}"
-            f"\n\n{agent.config.agent_name}'s version of prompt: {agents_version_of_prompt}"
-        )
-
-        combined_social_message = (
-            f"Message received: {content}\n\n"
-            f"{sender}'s version of prompt (to be evaluated): {received_prompt}"
-        )
-
-
-        # Set the current conversation ID in the context variable
-        token = agent.current_conversation_id.set(conversation_id)  # Added to set context
-
-        if conversation_id not in agent.conversations:
-            agent.conversations[conversation_id] = [
-                Message(role="system", content=combined_evalutor_prompt)
-            ]
-        
-        messages = agent.conversations[conversation_id]
-        
-        # Add user message if not duplicate
-        last_message = messages[-1] if messages else None
-        if not last_message or last_message.content != combined_social_message:
-            user_message = Message(
-                role="user",
-                content=combined_social_message,
-                sender=sender,
-                name=None,
-                tool_calls=None,
-                tool_call_id=None,
-                receiver=agent.config.agent_name,
-                timestamp=datetime.now().isoformat()
-            )
-            messages.append(user_message)
-            log_event(agent.logger, "message.added", 
-                        f"Added user message to social conversation {conversation_id}")
-
-        final_response = None
-        iteration_count = 0
-        max_iterations = 10
-        while iteration_count < max_iterations:
-            try:
-                log_event(agent.logger, "openai.request", 
-                            f"Sending request to OpenAI with {len(messages)} messages")
-                
-                response = await asyncio.wait_for(
-                    agent.client.chat.completions.create(
-                        model=agent.config.model,
-                        temperature=agent.config.temperature,
-                        messages=[m.dict() for m in messages],
-                        tools=list(agent.tools.values()) if agent.tools else None,
-                        timeout=3000
-                    ),
-                    timeout=3050
-                )
-                print("\n|---------------PROCESS SOCIAL MESSAGE-----------------|\n")
-                print("ITERATION:", iteration_count)
-                print("\nAGENT NAME:", agent.config.agent_name)
-                # Print response details
-                print("\nResponse Details:")
-                print(f"  Model: {response.model}")
-                print(f"  Created: {response.created}")
-                
-                # Print message details
-                print("\nMessage Details:")
-                message = response.choices[0].message
-                print(f"  Role: {message.role}")
-                print(f"  Content: {message.content}")
-                
-                # Print tool call details if present
-                if message.tool_calls:
-                    print("\nTool Calls:")
-                    for tc in message.tool_calls:
-                        print(f"\n  Tool Call ID: {tc.id}")
-                        print(f"  Type: {tc.type}")
-                        print(f"  Function Name: {tc.function.name}")
-                        print(f"  Arguments: {tc.function.arguments}")
-                print("\n|------------------------------------------------------|\n")
-
-                raw_message = response.choices[0].message
-                message_content = raw_message.content or ""
-                
-                # Create and add assistant message
-                assistant_message = Message(
-                    role="assistant",
-                    content=message_content,
-                    tool_calls=[ToolCall(
-                        id=tc.id,
-                        type=tc.type,
-                        function={
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
-                    ) for tc in raw_message.tool_calls] if raw_message.tool_calls else None,
-                    sender=agent.config.agent_name,
-                    receiver=sender,
-                    timestamp=datetime.now().isoformat(),
-                    name=None,
-                    tool_call_id=None
-                )
-                messages.append(assistant_message)
-                log_event(agent.logger, "message.added", 
-                            f"Added assistant message to conversation {conversation_id}")
-                
-                # Process tool calls if present
-                if raw_message.tool_calls:
-                    await agent.set_status(AgentStatus.TOOL_EXECUTING, "executing tools")
-                    log_event(agent.logger, "tool.processing", 
-                                f"Processing {len(raw_message.tool_calls)} tool calls")
-                    
-                    tool_calls = [ToolCall(
-                        id=tc.id,
-                        type=tc.type,
-                        function={
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
-                    ) for tc in raw_message.tool_calls]
-                    
-                    # Execute each tool and add results
-                    tool_iteration_count = 0
-                    for tool_call in tool_calls:
-                        tool_iteration_count += 1
-                        try:
-                            tool_result = await agent.tool_mod.execute(tool_call)
-                            tool_message = Message(
-                                role="tool",
-                                content=json.dumps(tool_result),
-                                tool_call_id=tool_call.id,
-                                timestamp=datetime.now().isoformat(),
-                                tool_calls=None,
-                                sender=tool_call.function['name'],
-                                receiver=agent.config.agent_name
-                            )
-                            print("\n<<----------------TOOL CALL MESSAGE---------------->>\n")
-                            print("ITERATION:", tool_iteration_count)
-                            print(
-                                f"\nTOOL MESSAGE: {tool_message.content}"
-                                f"\nSENDER: {tool_message.sender}"
-                                f"\nRECEIVER: {tool_message.receiver}"
-                                f"\nTOOL CALL ID: {tool_message.tool_call_id}"
-                                f"\nTIMESTAMP: {tool_message.timestamp}"
-                            )
-                            print("\n<<----------------------------------------------->>\n")
-                            messages.append(tool_message)
-                            log_event(agent.logger, "tool.result", 
-                                        f"Added tool result for {tool_call.function['name']}")
-                            
-                        except ToolError as e:
-                            error_message = Message(
-                                role="tool",
-                                content=json.dumps({"error": str(e)}),
-                                tool_call_id=tool_call.id,
-                                timestamp=datetime.now().isoformat(),
-                                name=None,
-                                tool_calls=None,
-                                sender=agent.config.agent_name,
-                                receiver=sender
-                            )
-                            messages.append(error_message)
-                            log_error(agent.logger, 
-                                        f"Tool error in {tool_call.function['name']}: {str(e)}")
-                                            
-                    await agent.set_status(AgentStatus.MESSAGE_PROCESSING, "tools completed")
-                    continue  # Continue loop to process tool results
-                
-                # If we have a message without tool calls, evaluate to see if we should continue or stop
-                if message_content:
-                    continue_or_stop = await agent._continue_or_stop(messages)
-                    if continue_or_stop == "STOP":
-                        final_response = message_content
-                        log_event(agent.logger, "message.final", 
-                                    f"Final response generated for conversation {conversation_id}")
-                        break
-                    else:
-                        # Wrap and append non-STOP message
-                        messages.append(Message(
-                            role="user",
-                            content=continue_or_stop,
-                            timestamp=datetime.now().isoformat(),
-                            name=agent.config.agent_name,
-                            tool_calls=None,
-                            tool_call_id=None,
-                            sender=agent.config.agent_name,
-                            receiver=agent.config.agent_name
-                        ))
-                        log_event(agent.logger, "message.continue", 
-                                    f"Added intermediate response for conversation {conversation_id}")
-                
-            except asyncio.TimeoutError as e:
-                log_error(agent.logger, "OpenAI request timed out", exc_info=e)
-                raise
-            except Exception as e:
-                log_error(agent.logger, "Error during message processing", exc_info=e)
-                raise
+            first_agent = sender
+            second_agent = agent.config.agent_name
             
-            iteration_count += 1
-        
-        if iteration_count >= max_iterations:
-            log_event(agent.logger, "message.max_iterations", 
-                        f"Reached maximum iterations ({max_iterations}) for conversation {conversation_id}")
-            final_response = f"I apologize, but I only got to here: {message_content}"
-                    
-        if final_response is None:
-            error_msg = "Failed to generate a proper response"
-            log_error(agent.logger, error_msg)
-            return "I apologize, but I wasn't able to generate a proper response."
-        
-        return final_response
+            #The first agent's intial prompt
+            first_agent_prompt = prompt.prompt
 
-    finally:
-        # Reset status and context
-        if agent.status != AgentStatus.SHUTTING_DOWN:
-            await agent.set_status(AgentStatus.QUEUE_PROCESSING, "finished message processing")
-        agent.current_conversation_id.reset(token)
+            prompt_type = prompt.prompt_type
+
+            #The second agent's intial prompt
+            second_agent_prompt = prompt_mapping[prompt_type]
+
+            combined_evaluator_prompt = (
+                f"{agent._evaluator_prompt}\n\nType of prompt being evaluated: {prompt_type}"
+                f"\n\n{second_agent}'s version of prompt: {second_agent_prompt}"
+                f"\n\nFormat the output as a JSON object with the following schema:"
+                "{\n"
+                f"  \"message\": \"Your message back to {first_agent} that will be sent with the evaluation.\",\n"
+                f"  \"evaluation\": \"Your written evaluation of {first_agent}'s prompt.\",\n"
+                "  \"score\": \"Numeric score (0-10) on prompt's effectiveness. "
+                "Zero means the prompt is totally ineffective. 10 means the prompt is perfect and cannot be improved further.\"\n"
+                "}"
+            )
+
+            combined_evaluator_message = (
+                f"Message received: {content}\n\n"
+                f"{first_agent}'s version of prompt (to be evaluated): {first_agent_prompt}"
+            )
+            
+            # Second_Agent's initial evaluation of First_Agent's prompt
+            await asyncio.sleep(0.1)  # Yield control before evaluation
+            second_agent_initial_eval = await evaluate_prompt(agent, combined_evaluator_prompt, combined_evaluator_message, "InitialPrompt")
+
+            eval_package = PromptEvaluation(
+                score=second_agent_initial_eval["score"],
+                evaluation=str(second_agent_initial_eval["evaluation"]),
+                prompt_type=prompt_type,
+                uuid=prompt.uuid
+            )
+
+            prompt_package = PromptModel(
+                prompt=second_agent_prompt,
+                prompt_type=prompt_type,
+                uuid=str(uuid.uuid4()),
+                timestamp=datetime.utcnow().isoformat(),
+                owner_agent_name=second_agent,
+                status="active"
+            )
+            response_content = str(second_agent_initial_eval["message"])
+            try:
+                send_task = asyncio.create_task(send_social(
+                    agent=agent,
+                    receiver=first_agent,
+                    conversation_id=conversation_id,
+                    message_content=response_content,
+                    prompt=prompt_package,
+                    evaluation=eval_package,
+                    message_type="EvalResponse"
+                ))
+
+                if request_id in agent.pending_requests:
+                    log_event(agent.logger, "social.message.dequeue", 
+                             f"Resolving request {request_id} of message type {message_type}",
+                             level="DEBUG")
+                    agent.pending_requests[request_id].set_result(response_content)
+                return response_content
+                
+            except Exception as e:
+                log_error(agent.logger, f"Error in social message processing: {str(e)}")
+                if request_id in agent.pending_requests:
+                    agent.pending_requests[request_id].set_exception(e)
+                raise
+
+        elif message_type == "EvalResponse":
+            """Second_Agent sent its initial PromptEvaluation and PromptModel to First_Agent who is now doing the processing.
+            The First_Agent runs both evaluate_prompt and update_prompt and sends back an initial PromptEvaluation and its updated PromptModel
+            """
+
+            second_agent = sender
+            first_agent = agent.config.agent_name
+
+            # Second_Agent's Initial Prompt
+            second_agent_prompt = prompt.prompt
+            
+            prompt_type = prompt.prompt_type
+
+            # Second_Agent's Evaluation of First_Agent's Initial Prompt
+            prompt_evaluation = evaluation.evaluation
+            prompt_score = evaluation.score
+
+            await agent._record_score(prompt_type, prompt_score, conversation_id, "friends_initial_eval")
+
+            # First_Agent's version of initial prompt
+            first_agent_prompt = prompt_mapping[prompt_type]
+
+            combined_evaluator_prompt = (
+                f"{agent._evaluator_prompt}\n\nType of prompt being evaluated: {prompt_type}"
+                f"\n\n{first_agent}'s version of prompt: {first_agent_prompt}"
+                f"\n\nFormat the output as a JSON object with the following schema:"
+                "{\n"
+                f"  \"message\": \"Your message back to {second_agent} that will be sent with the evaluation.\",\n"
+                f"  \"evaluation\": \"Your written evaluation of {second_agent}'s prompt.\",\n"
+                "  \"score\": \"Numeric score (0-10) on prompt's effectiveness. "
+                "Zero means the prompt is totally ineffective. 10 means the prompt is perfect and cannot be improved further.\"\n"
+                "}"
+            )
+
+            combined_evaluator_message = (
+                f"Message received: {content}\n\n"
+                f"{second_agent}'s version of prompt (to be evaluated): {second_agent_prompt}"
+            )
+
+            # First_Agent's Evaluation of Second_Agent's Initial Prompt
+            await asyncio.sleep(0.1)  # Yield control before evaluation
+            first_agent_initial_eval = await evaluate_prompt(agent, combined_evaluator_prompt, combined_evaluator_message, "EvalResponse")
+
+            #TODO: Need to implement updated schema logic
+            combined_updater_prompt = (
+                f"{agent._evaluator_prompt}\n\nType of prompt being updated: {prompt_type}"
+                f"\n\n{first_agent}'s version of prompt: {first_agent_prompt}"
+            )
+
+            prompt_schema = agent.get_prompt_schema(prompt_type)
+            if prompt_schema is not None:
+                prompt_schema_str = f"\n\nThe updated prompt needs to include instructions for the output to be in exactly this format:\n{prompt_schema}"
+            else:
+                prompt_schema_str = ""
+
+            combined_updater_message = (
+                f"{content}\n## Evaluation: {prompt_evaluation}\n\n"
+                f"## Score (0-10): {prompt_score}\n\n"
+                f"{second_agent}'s version of prompt (for inspiration): {second_agent_prompt}\n\n"
+                f"{prompt_schema_str}\n\n"
+                f"Format your final output as a JSON object with the following schema:"
+                "{\n"
+                "  \"comments\": \"Any thought or comments on the prompt.\",\n"
+                "  \"updated_prompt\": \"The updated prompt.\"\n"
+                "}"
+            )
+
+            await asyncio.sleep(0.1)  # Yield control before prompt update
+            first_agent_response = await update_prompt(agent, combined_updater_prompt, combined_updater_message)
+
+            updated_prompt = str(first_agent_response["updated_prompt"])
+            updated_comments = str(first_agent_response["comments"])
+
+            updated_score = await agent._evaluate_prompt(prompt_type, updated_prompt)
+            await agent._record_score(prompt_type, updated_score, conversation_id, "self_eval")
+            
+            await agent.update_prompt_module(prompt_type, updated_prompt)
+
+            eval_package = PromptEvaluation(
+                score=first_agent_initial_eval["score"],
+                evaluation=str(first_agent_initial_eval["evaluation"]),
+                prompt_type=prompt_type,
+                uuid=prompt.uuid
+            )
+
+            prompt_package = PromptModel(
+                prompt=updated_prompt,
+                prompt_type=prompt_type,
+                uuid=str(uuid.uuid4()),
+                timestamp=datetime.utcnow().isoformat(),
+                owner_agent_name=first_agent,
+                status="active"
+            )
+
+            try:
+                send_task = asyncio.create_task(send_social(
+                    agent=agent,
+                    receiver=second_agent,
+                    conversation_id=conversation_id,
+                    message_content=f"{first_agent_initial_eval['message']}\n\n{updated_comments}",
+                    prompt=prompt_package,
+                    evaluation=eval_package,
+                    message_type="PromptUpdate"
+                ))
+
+                response_content = f"{first_agent_initial_eval['message']}\n\n{updated_comments}"
+                if request_id in agent.pending_requests:
+                    log_event(agent.logger, "social.message.dequeue", 
+                             f"Resolving Pending Request for {message_type} in queue {request_id}",
+                             level="DEBUG")
+                    agent.pending_requests[request_id].set_result(response_content)
+                return response_content
+                
+            except Exception as e:
+                log_error(agent.logger, f"Error sending social message in {message_type}: {str(e)}")
+                raise
+
+        elif message_type == "PromptUpdate":
+            """First_Agent sent an inital PromptEvaluation and its updated PromptModel to Second_Agent who is now doing the processing.
+            The Second_Agent runs evaluate_prompt (on First_Agent's updated PromptModel) and update_prompt and sends back an updated PromptEvaluation
+            and its updated PromptModel
+            """
+            log_event(agent.logger, "social.state", 
+                     f"Processing PromptUpdate - Status: {agent.status.name}, "
+                     f"Sender: {sender}, Conv: {conversation_id}",
+                     level="DEBUG")
+            
+            first_agent = sender
+            second_agent = agent.config.agent_name
+
+            first_agent_updated_prompt = prompt.prompt
+            prompt_type = prompt.prompt_type
+
+            # First_Agent's Evaluation of Second_Agent's Initial Prompt
+            prompt_evaluation = evaluation.evaluation
+            prompt_score = evaluation.score
+
+            # Record friend's intial evaluation score
+            await agent._record_score(prompt_type, prompt_score, conversation_id, "friends_initial_eval") 
+
+            #The second agent's intial prompt
+            second_agent_prompt = prompt_mapping[prompt_type]
+
+            combined_evaluator_prompt = (
+                f"{agent._evaluator_prompt}\n\nType of prompt being re-evaluated: {prompt_type}"
+                f"\n\n{second_agent}'s version of prompt: {second_agent_prompt}"
+                f"\n\nFormat the output as a JSON object with the following schema:"
+                "{\n"
+                f"  \"message\": \"Your message back to {first_agent} that will be sent with the re-evaluation.\",\n"
+                f"  \"evaluation\": \"Your written evaluation of {first_agent}'s prompt.\",\n"
+                "  \"score\": \"Numeric score (0-10) on prompt's effectiveness. "
+                "Zero means the prompt is totally ineffective. 10 means the prompt is perfect and cannot be improved further.\"\n"
+                "}"
+            )
+
+            combined_evaluator_message = (
+                f"Message received: {content}\n\n"
+                f"{first_agent}'s version of prompt (to be re-evaluated): {first_agent_updated_prompt}"
+            )
+
+            await asyncio.sleep(0.1)  # Yield control before evaluation
+            second_agent_updated_eval = await evaluate_prompt(agent, combined_evaluator_prompt, combined_evaluator_message, "PromptUpdate")
+
+            updated_evaluation = str(second_agent_updated_eval["evaluation"])
+            updated_score = second_agent_updated_eval["score"]
+
+            #TODO: Need to implement updated schema logic
+            combined_updater_prompt = (
+                f"{agent._evaluator_prompt}\n\nType of prompt being updated: {prompt_type}"
+                f"\n\n{second_agent}'s version of prompt: {second_agent_prompt}"
+            )
+
+            prompt_schema = agent.get_prompt_schema(prompt_type)
+            if prompt_schema is not None:
+                prompt_schema_str = f"\n\nThe updated prompt needs to include instructions for the output to be in exactly this format:\n{prompt_schema}\n\n"
+            else:
+                prompt_schema_str = ""
+
+            combined_updater_message = (
+                f"{content}\n## Evaluation: {prompt_evaluation}\n\n"
+                f"## Score (0-10): {prompt_score}\n\n"
+                f"{first_agent}'s version of prompt (for inspiration): {first_agent_updated_prompt}\n\n"
+                f"{prompt_schema_str}"
+                f"Format your final output as a JSON object with the following schema:"
+                "{\n"
+                "  \"comments\": \"Any thought or comments on the prompt.\",\n"
+                "  \"updated_prompt\": \"The updated prompt.\"\n"
+                "}"
+            )
+
+            await asyncio.sleep(0.1)  # Yield control before prompt update
+            second_agent_response = await update_prompt(agent, combined_updater_prompt, combined_updater_message)
+
+            updated_prompt = str(second_agent_response["updated_prompt"])
+            updated_comments = str(second_agent_response["comments"])
+
+            updated_own_score = await agent._evaluate_prompt(prompt_type, updated_prompt)
+            await agent._record_score(prompt_type, updated_own_score, conversation_id, "self_eval")
+
+            await agent.update_prompt_module(prompt_type, updated_prompt)
+
+            eval_package = PromptEvaluation(
+                score=second_agent_updated_eval["score"],
+                evaluation=str(second_agent_updated_eval["evaluation"]),
+                prompt_type=prompt_type,
+                uuid=prompt.uuid
+            )
+
+            prompt_package = PromptModel(
+                prompt=updated_prompt,
+                prompt_type=prompt_type,
+                uuid=str(uuid.uuid4()),
+                timestamp=datetime.utcnow().isoformat(),
+                owner_agent_name=second_agent,
+                status="active"
+            )
+
+            try:
+                send_task = asyncio.create_task(send_social(
+                    agent=agent,
+                    receiver=first_agent,
+                    conversation_id=conversation_id,
+                    message_content=f"{second_agent_updated_eval['message']}\n\n{updated_comments}",
+                    prompt=prompt_package,
+                    evaluation=eval_package,
+                    message_type="UpdateResponse"
+                ))
+
+                response_content = f"{second_agent_updated_eval['message']}\n\n{updated_comments}"
+                if request_id in agent.pending_requests:
+                    log_event(agent.logger, "social.message.dequeue", 
+                             f"Resolving Pending Request for {message_type} in queue {request_id}",
+                             level="DEBUG")
+                    agent.pending_requests[request_id].set_result(response_content)
+                return response_content
+                
+            except Exception as e:
+                log_error(agent.logger, f"Error sending social message in {message_type}: {str(e)}")
+                raise
+
+        elif message_type == "UpdateResponse":
+            """Second_Agent sent its updated PromptEvaluation and updated PromptModel to First_Agent who is now doing the processing.
+            The First_Agent runs evaluate_prompt on the updated PromptModel and uses the updated PromptEvaluation to create FinalScore
+            """
+
+            second_agent = sender
+            first_agent = agent.config.agent_name
+
+            # Receiver's Updated Prompt
+            updated_prompt = prompt.prompt
+            prompt_type = prompt.prompt_type
+
+            received_updated_evaluation = evaluation.evaluation
+            received_updated_score = evaluation.score
+
+            await agent._record_score(prompt_type, received_updated_score, conversation_id, "friends_updated_eval")
+
+            #The second agent's intial prompt
+            first_agent_prompt = prompt_mapping[prompt_type]
+
+            combined_evaluator_prompt = (
+                f"{agent._evaluator_prompt}\n\nType of prompt being re-evaluated: {prompt_type}"
+                f"\n\n{first_agent}'s version of prompt: {first_agent_prompt}"
+                f"\n\nFormat the output as a JSON object with the following schema:"
+                "{\n"
+                f"  \"message\": \"Your message back to {second_agent} that will be sent with the re-evaluation.\",\n"
+                f"  \"evaluation\": \"Your written evaluation of {second_agent}'s prompt.\",\n"
+                "  \"score\": \"Numeric score (0-10) on prompt's effectiveness. "
+                "Zero means the prompt is totally ineffective. 10 means the prompt is perfect and cannot be improved further.\"\n"
+                "}"
+            )
+
+            combined_evaluator_message = (
+                f"Message received: {content}\n\n"
+                f"{second_agent}'s version of prompt (to be re-evaluated): {updated_prompt}"
+            )
+
+            await asyncio.sleep(0.1)  # Yield control before evaluation
+            first_agent_updated_eval = await evaluate_prompt(agent, combined_evaluator_prompt, combined_evaluator_message, "UpdateResponse")
+
+            updated_evaluation = str(first_agent_updated_eval["evaluation"])
+            updated_score = first_agent_updated_eval["score"]
+
+            eval_package = PromptEvaluation(
+                score=updated_score,
+                evaluation=updated_evaluation,
+                prompt_type=prompt_type,
+                uuid=prompt.uuid
+            )
+
+            try:
+                send_task = asyncio.create_task(send_social(
+                    agent=agent,
+                    receiver=second_agent,
+                    conversation_id=conversation_id,
+                    message_content=str(first_agent_updated_eval['message']),
+                    prompt=None,
+                    evaluation=eval_package,
+                    message_type="FinalEval"
+                ))
+
+                response_content = str(first_agent_updated_eval['message'])
+                if request_id in agent.pending_requests:
+                    log_event(agent.logger, "social.message.dequeue", 
+                             f"Resolving Pending Request for {message_type} in queue {request_id}",
+                             level="DEBUG")
+                    agent.pending_requests[request_id].set_result(response_content)
+                return response_content
+                
+            except Exception as e:
+                log_error(agent.logger, f"Error sending social message in {message_type}: {str(e)}")
+                raise
+
+        elif message_type == "FinalEval":
+            """"First_Agent sent its updated PromptEvaluation ONLY to Second_Agent who is now doing the processing.
+            The Second_Agent uses the updated PromptEvaluation to create FinalScore
+            """
+
+            first_agent = sender
+            second_agent = agent.config.agent_name
+
+            updated_evaluation = evaluation.evaluation
+            updated_score = evaluation.score
+            prompt_type = evaluation.prompt_type
+
+            await agent._record_score(prompt_type, updated_score, conversation_id, "friends_updated_eval")
+
+            await asyncio.sleep(0.1)  # Yield control before completing
+            await agent.set_status(AgentStatus.AVAILABLE, "completed socialising")
+
+            result = "Prompt Exchange Completed."
+            if request_id in agent.pending_requests:
+                log_event(agent.logger, "social.message.dequeue", 
+                          f"Resolving Pending Request for {message_type} in queue {request_id} to {result}",
+                          level="DEBUG")
+                agent.pending_requests[request_id].set_result(result)
+            return result
+
+        else:
+            raise ValueError(f"Invalid message type: {message_type}")
+
+    except Exception as e:
+        log_error(agent.logger, 
+                 f"Social processing error - Type: {message_type}, Status: {agent.status.name}, "
+                 f"Error: {str(e)}", exc_info=e)
+        if request_id in agent.pending_requests:
+            log_event(agent.logger, "social.message.dequeue", 
+                      f"Setting exception for Pending Request for {message_type} in queue {request_id}",
+                      level="DEBUG")
+            agent.pending_requests[request_id].set_exception(e)
+        raise
+
+    return "Error"
+
+async def evaluate_prompt(agent: Agent, social_system_prompt: str, social_message: str, message_type: str) -> dict:
+    """Evaluate the prompt based on the social message"""
+    try:
+        response = await asyncio.wait_for(
+            agent.client.chat.completions.create(
+                model=agent.config.model,
+                temperature=agent.config.temperature,
+                messages=[
+                    {"role": "system", "content": social_system_prompt},
+                    {"role": "user", "content": social_message}
+                ],
+                timeout=3000,
+                response_format={ "type": "json_object" }
+            ),
+            timeout=3050
+        )
+
+        response_json = json.loads(response.choices[0].message.content)
+
+        evaluation = response_json["evaluation"]
+        raw_score = response_json["score"]
+        
+        if not isinstance(raw_score, int) or raw_score < 0 or raw_score > 10:
+            score = normalise_score(agent, raw_score)
+            log_event(agent.logger, "social.prompt.evaluate.error", 
+                    f"Invalid raw_score: {raw_score} of type {type(raw_score).__name__}. Normalised to {score}")
+        else:
+            score = raw_score
+
+        response_json["score"] = score
+
+        log_event(agent.logger, "social.prompt.evaluate", 
+                    f"Received response from {agent.config.model}: {response_json} for message type {message_type}",
+                    level="DEBUG")
+
+    except Exception as e:
+        log_error(agent.logger, "Error during prompt evaluation", exc_info=e)
+        raise
+
+    return response_json
+
+async def update_prompt(agent: Agent, social_system_prompt: str, social_message: str) -> dict:
+    """Update the prompt based on the social message"""
+    try:
+
+        response = await asyncio.wait_for(
+            agent.client.chat.completions.create(
+                model=agent.config.model,
+                temperature=agent.config.temperature,
+                messages=[
+                    {"role": "system", "content": social_system_prompt},
+                    {"role": "user", "content": social_message}
+                ],
+                timeout=3000,
+                response_format={ "type": "json_object" }
+            ),
+            timeout=3050
+        )
+
+        response_json = json.loads(response.choices[0].message.content)
+
+        log_event(agent.logger, "social.prompt.update", 
+                    f"Received response from {agent.config.model}: {response_json}",
+                    level="DEBUG")
+
+    except Exception as e:
+        log_error(agent.logger, "Error during prompt update", exc_info=e)
+        raise
+
+    return response_json
+
+async def send_social(
+    agent: Agent,
+    receiver: str,
+    conversation_id: str,
+    message_content: str,
+    prompt: PromptModel | None,
+    evaluation: PromptEvaluation | None,
+    message_type: str
+) -> None:
+    """Send a social message without waiting for response."""
+    try:
+        # Create social message using the appropriate helper method
+        if prompt and evaluation:
+            social_message = SocialMessage.create_with_prompt_and_eval(
+                sender=agent.config.agent_name,
+                receiver=receiver,
+                content=message_content,
+                conversation_id=conversation_id,
+                prompt=prompt,
+                evaluation=evaluation,
+                message_type=message_type
+            )
+        elif prompt:
+            social_message = SocialMessage.create_with_prompt(
+                sender=agent.config.agent_name,
+                receiver=receiver,
+                content=message_content,
+                conversation_id=conversation_id,
+                prompt=prompt,
+                message_type=message_type
+            )
+        elif evaluation:
+            social_message = SocialMessage.create_with_eval(
+                sender=agent.config.agent_name,
+                receiver=receiver,
+                content=message_content,
+                conversation_id=conversation_id,
+                evaluation=evaluation,
+                message_type=message_type
+            )
+        else:
+            raise ValueError("Must provide either prompt, evaluation, or both")
+
+        # Send message without waiting for response
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            log_event(agent.logger, "social.message.sent",
+                     f"Sending message to {receiver} for conversation {conversation_id}",
+                     level="DEBUG")
+            
+            await client.post(
+                "http://localhost:8000/agent/message",
+                json=social_message.dict(),
+                timeout=300.0
+            )
+            
+            log_event(agent.logger, "social.message.sent.success",
+                     f"Successfully sent message to {receiver} for conversation {conversation_id}",
+                     level="DEBUG")
+            
+            # Return empty dict to maintain compatibility with existing code
+            return
+
+    except httpx.TimeoutException as e:
+        log_error(agent.logger, f"Timeout sending social message to {receiver}")
+        raise
+    except Exception as e:
+        log_error(agent.logger, f"Failed to send social message: {str(e)}")
+        raise

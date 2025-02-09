@@ -109,6 +109,9 @@ class FeedbackMessage(BaseModel):
     )
 
 class PromptModel(BaseModel):
+    """
+    Represents a prompt model that can be used by an agent.
+    """
     prompt: str = Field(..., description="The prompt to be used")
     prompt_type: str = Field(..., description="The type of prompt")
     uuid: str = Field(..., description="The unique identifier for the prompt")
@@ -116,17 +119,28 @@ class PromptModel(BaseModel):
     owner_agent_name: str = Field(..., description="The name of the agent that owns the prompt")
     status: str = Field(..., description="The status of the prompt") #may want to make this an enum
 
+class PromptEvaluation(BaseModel):
+    """
+    Represents a feedback score and evaluation for a prompt.
+    """
+    score: int = Field(..., description="The score of the prompt")
+    evaluation: str = Field(..., description="The evaluation of the prompt")
+    prompt_type: str = Field(..., description="The type of prompt being evaluated")
+    uuid: str = Field(..., description="The unique identifier for the prompt being evaluated (same as the prompt model uuid)")
+
 class SocialMessage(APIMessage):
     """
-    Represents a social message between agents that contains a PromptModel.
-    A SocialMessage is always created with a prompt, which distinguishes it from a regular APIMessage.
+    Represents a social message between agents that may contain a PromptModel and/or a PromptEvaluation.
+    A SocialMessage can be created with either a prompt or an evaluation, depending on the message type.
     """
-    prompt: PromptModel = Field(..., description="The prompt being shared between agents")
+    prompt: Optional[PromptModel] = Field(None, description="The prompt being shared between agents")
+    evaluation: Optional[PromptEvaluation] = Field(None, description="The evaluation of the prompt")
+    message_type: str = Field(..., description="The type of message", examples=["InitialPrompt", "EvalResponse", "PromptUpdate", "UpdateResponse", "FinalEval"])
 
     @classmethod
-    def create_with_prompt(cls, sender: str, receiver: str, content: str, conversation_id: str, prompt: PromptModel) -> "SocialMessage":
+    def create_with_prompt(cls, sender: str, receiver: str, content: str, conversation_id: str, prompt: PromptModel, message_type: str) -> "SocialMessage":
         """
-        Factory method to create a social message with required prompt and current timestamp.
+        Factory method to create an initial or updated social message with a required prompt and current timestamp.
         
         Args:
             sender: Identifier of the sending agent
@@ -134,7 +148,7 @@ class SocialMessage(APIMessage):
             content: Message content
             conversation_id: Unique conversation identifier
             prompt: PromptModel instance that will be shared
-            
+            message_type: The type of message should always be "InitialPrompt"
         Returns:
             SocialMessage: Newly created message instance with prompt
         """
@@ -144,5 +158,47 @@ class SocialMessage(APIMessage):
             content=content,
             timestamp=datetime.utcnow().isoformat(),
             conversation_id=conversation_id,
-            prompt=prompt
+            prompt=prompt,
+            message_type=message_type
+        )
+
+    @classmethod
+    def create_with_prompt_and_eval(cls, sender: str, receiver: str, content: str, conversation_id: str, prompt: PromptModel, evaluation: PromptEvaluation, message_type: str) -> "SocialMessage":
+        """
+        Factory method to create an initial or updated social message with a required prompt and evaluation and current timestamp.
+        """
+        return cls(
+            sender=sender,
+            receiver=receiver,
+            content=content,
+            timestamp=datetime.utcnow().isoformat(),
+            conversation_id=conversation_id,
+            prompt=prompt,
+            evaluation=evaluation,
+            message_type=message_type
+        )
+
+    @classmethod
+    def create_with_eval(cls, sender: str, receiver: str, content: str, conversation_id: str, evaluation: PromptEvaluation, message_type: str) -> "SocialMessage":
+        """
+        Factory method to create a response or final social message with a required evaluation and current timestamp.
+        
+        Args:
+            sender: Identifier of the sending agent
+            receiver: Identifier of the receiving agent
+            content: Message content
+            conversation_id: Unique conversation identifier
+            evaluation: PromptEvaluation instance that will be shared
+            message_type: The type of message always "FinalEval"
+        Returns:
+            SocialMessage: Newly created message instance with evaluation
+        """
+        return cls(
+            sender=sender,
+            receiver=receiver,
+            content=content,
+            timestamp=datetime.utcnow().isoformat(),
+            conversation_id=conversation_id,
+            evaluation=evaluation,
+            message_type=message_type
         )

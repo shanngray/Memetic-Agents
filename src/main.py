@@ -53,7 +53,7 @@ async def main():
                 module = __import__(module_name, fromlist=[function_name])
                 create_func = getattr(module, function_name)
                 
-                logger.info(f"Creating {agent_name} agent")
+                logger.info(f"Waking up {agent_name} agent")
                 agent = create_func(chroma_client=chroma_client)
                 
                 # Setup agent and get tasks

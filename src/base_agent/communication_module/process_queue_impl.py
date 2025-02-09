@@ -42,6 +42,3 @@ async def process_queue_impl(agent: Agent):
             if request["id"] in agent.pending_requests:
                 agent.pending_requests[request["id"]].set_exception(e)
                 del agent.pending_requests[request["id"]]
-        finally:
-            if agent.status != AgentStatus.SHUTTING_DOWN:
-                await agent.set_status(AgentStatus.IDLE, "end processing queue")

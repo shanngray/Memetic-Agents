@@ -1,9 +1,13 @@
 import uuid
+import os
+import dotenv
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Union
 from chromadb import Collection
 
 from src.log_config import log_event, log_error
+
+dotenv.load_dotenv()
 
 class MemoryManager:
     """Manages agent memory storage and retrieval using ChromaDB."""
@@ -71,7 +75,7 @@ class MemoryManager:
             )
             
             log_event(self.logger, "memory.stored", 
-                     f"Stored memory {memory_id} in {collection_name}: {content[:100]}...")
+                     f"Stored memory {memory_id} in {collection_name}: {content[:100]}...", level="DEBUG")
             return memory_id
             
         except Exception as e:
@@ -129,7 +133,8 @@ class MemoryManager:
             all_memories.sort(key=lambda x: x["relevance"], reverse=True)
             
             log_event(self.logger, "memory.retrieved", 
-                     f"Retrieved {len(all_memories)} memories across {len(collection_names)} collections for query: {query}")
+                     f"Retrieved {len(all_memories)} memories across {len(collection_names)} collections for query: {query}...",
+                     level="DEBUG")
             return all_memories[:n_results]  # Return top N overall
             
         except Exception as e:
@@ -155,7 +160,7 @@ class MemoryManager:
                 collection.delete(ids=[memory_id])
                 
             log_event(self.logger, "memory.deleted", 
-                     f"Deleted memory {memory_id} from {len(collections)} collections")
+                     f"Deleted memory {memory_id} from collection: {collection_name}")
             
         except Exception as e:
             log_error(self.logger, f"Failed to delete memory: {str(e)}", exc_info=e)

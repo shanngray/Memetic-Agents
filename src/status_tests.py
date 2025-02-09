@@ -8,8 +8,8 @@ async def test_direct_server_call():
     """Test calling the server endpoint directly with different payload formats"""
     async with httpx.AsyncClient() as client:
         test_cases = [
-            "idle",        # String format
-            "IDLE",        # Uppercase string
+            "available",        # String format
+            "AVAILABLE",        # Uppercase string
             "processing",  # Another valid status
             "invalid"      # Invalid status
         ]
@@ -34,8 +34,8 @@ async def test_direct_agent_call():
     """Test calling the agent's status endpoint directly"""
     async with httpx.AsyncClient() as client:
         test_cases = [
-            ("String value", "idle"),
-            ("Uppercase", "IDLE"),
+            ("String value", "available"),
+            ("Uppercase", "AVAILABLE"),
             ("Invalid status", "invalid")
         ]
         
@@ -55,7 +55,7 @@ async def test_direct_agent_call():
 async def test_status_enum_validation():
     """Test the AgentStatus enum validation"""
     print("\n=== Testing Status Enum Validation ===")
-    test_statuses = ["idle", "IDLE", "processing", "PROCESSING", "invalid_status"]
+    test_statuses = ["available", "AVAILABLE", "processing", "PROCESSING", "invalid_status"]
     
     for status in test_statuses:
         print(f"\nTesting status: {status}")
@@ -68,7 +68,7 @@ async def test_status_enum_validation():
 async def test_status_transitions():
     """Test valid status transitions"""
     print("\n=== Testing Status Transitions ===")
-    current_status = AgentStatus.IDLE
+    current_status = AgentStatus.AVAILABLE
     print(f"Current status: {current_status}")
     
     valid_transitions = AgentStatus.get_valid_transitions(current_status)
@@ -79,8 +79,8 @@ async def test_full_pipeline():
     print("\n=== Testing Full Pipeline ===")
     
     test_cases = [
-        ("idle", "standard lowercase"),
-        ("IDLE", "standard uppercase"),
+        ("available", "standard lowercase"),
+        ("AVAILABLE", "standard uppercase"),
         ("Processing", "mixed case"),
         ("invalid", "invalid status"),
     ]

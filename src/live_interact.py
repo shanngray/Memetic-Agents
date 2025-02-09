@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import re
 import uuid
+import logging
 from datetime import datetime
 from pathlib import Path
 from api_server.models.api_models import APIMessage
@@ -9,6 +10,18 @@ from base_agent.models import AgentStatus
 from icecream import ic
 import os
 from conversation_store import ConversationStore
+from log_config import setup_logger, log_event
+
+# Setup logging with environment variable
+server_log_level = os.getenv("LIVE_INTERACT_LOG_LEVEL", "INFO")
+
+# Initialize logger
+logger = setup_logger(
+    name="LiveInteract",
+    log_path=Path("logs"),
+    level=os.getenv("LIVE_INTERACT_LOG_LEVEL", "INFO"),
+    console_logging=True
+)
 
 # Initialize conversation store
 CONVERSATION_STORE = ConversationStore(Path("agent_files/conversations.json"))
@@ -17,6 +30,7 @@ async def handle_lookup():
     """Query the directory service for all registered agents."""
     async with httpx.AsyncClient() as client:
         try:
+            log_event(logger, "directory.lookup", "Querying directory service for registered agents", level="DEBUG")
             response = await client.get("http://localhost:8000/agent/lookup")
             agents_dict = response.json()
             print("\nRegistered Agents:")
@@ -24,20 +38,26 @@ async def handle_lookup():
                 print(f"\n- {name} (Port: {agent_info['port']})")
                 print(f"  Description: {agent_info['description']}")
                 print(f"  Tools: {', '.join(agent_info['tools'])}")
+            log_event(logger, "directory.lookup", f"Found {len(agents_dict)} registered agents", level="DEBUG")
         except Exception as e:
+            log_event(logger, "directory.lookup", f"Error looking up agents: {str(e)}", level="ERROR")
             print(f"\nError looking up agents: {str(e)}")
 
 async def handle_direct_message(agent_name: str, message: str, conversation_id: str):
     """Send a message directly to a specific agent."""
     if not conversation_id:
+        log_event(logger, "message.content", "No active conversation for direct message", level="DEBUG")
         print("\nNo active conversation. Use /new to start one or /resume <id> to continue an existing one.")
         return
         
+    log_event(logger, "message.content", f"Sending message to {agent_name} in conversation {conversation_id[:8]}...", level="DEBUG")
+    
     # Update conversation participants if needed
     conversation = CONVERSATION_STORE.get_conversation(conversation_id)
     if conversation and agent_name not in conversation["participants"]:
         participants = conversation["participants"] + [agent_name]
         CONVERSATION_STORE.update_conversation(conversation_id, participants=participants)
+        log_event(logger, "directory.agent_registered", f"Added {agent_name} to conversation {conversation_id[:8]}", level="DEBUG")
     
     api_message = APIMessage(
         sender="User",
@@ -76,29 +96,51 @@ async def handle_direct_message(agent_name: str, message: str, conversation_id: 
 
 async def handle_status_update(agent_name: str, new_status: str, conversation_id: str):
     """Update an agent's status."""
+    # Format conversation ID for logging, handling None case
+    conv_id_str = f"{conversation_id[:8]}" if conversation_id else "no active conversation"
+    log_event(logger, "status.update.request", 
+             f"Updating status for {agent_name} to {new_status} for {conv_id_str}", level="DEBUG")
     try:
-        # First validate the status - this will raise ValueError if invalid
-        status_value = new_status.lower()
-        status = AgentStatus(status_value)  # Validate against enum
-    except ValueError:
-        valid_statuses = [s.value.lower() for s in AgentStatus]
-        print(f"\nError: Invalid status '{new_status}'. Must be one of: {', '.join(valid_statuses)}")
-        return
-
-    # If we get here, status is valid - try to send the update
-    try:
+        # Allow both name and value input
+        try:
+            status_int = int(new_status)
+            status = AgentStatus(status_int)
+        except ValueError:
+            status = AgentStatus[new_status.upper()]
+            
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"http://localhost:8000/agent/{agent_name}/status",
-                params={"status": status.value}  # This sends "memorising"
+                params={"status": str(status.value)}
             )
+            # Log the raw response for debugging
+            log_event(logger, "status.update.debug", 
+                     f"Raw response: Status {response.status_code}, Content: {response.text}", level="DEBUG")
+            
             response.raise_for_status()
             result = response.json()
+            log_event(logger, "status.update.success", 
+                     f"Status updated for {agent_name}: {result['previous_status']} → {result['current_status']}", level="DEBUG")
             print(f"\nStatus updated: {result['previous_status']} → {result['current_status']}")
+    except KeyError:
+        valid_statuses = [s.name.lower() for s in AgentStatus]
+        error_msg = f"Invalid status '{new_status}'. Must be one of: {', '.join(valid_statuses)}"
+        log_event(logger, "status.update.error", error_msg, level="ERROR")
+        print(f"\nError: {error_msg}")
+        return
+    except httpx.HTTPError as e:
+        error_msg = f"HTTP error occurred: {str(e)}"
+        if hasattr(e, 'response'):
+            error_msg += f"\nResponse status: {e.response.status_code}"
+            error_msg += f"\nResponse content: {e.response.text}"
+        log_event(logger, "status.update.error", error_msg, level="ERROR")
+        print(f"\nError from server while updating status of agent {agent_name} to {new_status}.")
+        print(f"Error details: {error_msg}")
     except Exception as e:
-        print(f"\nError from server: {str(e)}")
-        if hasattr(e, 'response') and e.response.status_code == 422:
-            print("Invalid status format. Please check the status value being sent.")
+        error_msg = f"Unexpected error: {str(e)}, Type: {type(e).__name__}"
+        log_event(logger, "status.update.error", error_msg, level="ERROR")
+        print(f"\nError from server while updating status of agent {agent_name} to {new_status}.")
+        print(f"Error details: {error_msg}")
 
 async def handle_show_collection(collection_name: str):
     """Show documents in the specified collection."""
@@ -169,6 +211,8 @@ async def handle_new_conversation(new_name="New Conversation"):
         name=new_name,
         participants=["User"]  # Initial participant
     )
+    log_event(logger, "social.conversation.new", 
+              f"Created new conversation {conversation_id[:8]} with name: {new_name}", level="DEBUG")
     return conversation_id
 
 async def handle_list_conversations():
@@ -192,6 +236,7 @@ async def handle_rename_conversation(conversation_id: str, new_name: str):
     print(f"\nRenamed conversation to: {new_name}")
 
 async def live_interact():
+    log_event(logger, "server.startup", "Starting live interaction interface", level="DEBUG")
     EXIT_COMMANDS = {"exit", "quit", "bye", "goodbye", "/exit", "/quit"}
     CONVERSATION_COMMANDS = {"/new", "/list", "/resume", "/exit_conv", "/rename"}
     
@@ -227,6 +272,7 @@ async def live_interact():
         
         match user_input:
             case cmd if cmd.lower() in EXIT_COMMANDS:
+                log_event(logger, "server.shutdown", "Ending live interaction session")
                 print("Ending conversation. Goodbye!")
                 break
                 

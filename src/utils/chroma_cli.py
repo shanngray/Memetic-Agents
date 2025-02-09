@@ -9,6 +9,10 @@ import argparse
 from typing import Optional
 from pathlib import Path
 import sys
+import os
+
+# Add project root to path
+sys.path.append(str(Path(__file__).parents[2]))
 
 from src.database.chroma_database import get_chroma_client
 
@@ -160,6 +164,44 @@ async def delete_collection(client, target: str) -> None:
     except Exception as e:
         print(f"Error deleting collection(s): {str(e)}")
 
+async def initialize_collections(client, agent_name: str) -> None:
+    """Initialize standard collections for an agent."""
+    try:
+        collections = [
+            f"{agent_name}_short_term",
+            f"{agent_name}_long_term",
+            f"{agent_name}_reflections",
+            f"{agent_name}_feedback"
+        ]
+        
+        existing_collections = {col.name: col for col in client.list_collections()}
+        
+        for collection_name in collections:
+            if collection_name in existing_collections:
+                print(f"\nCollection already exists: {collection_name}")
+                if await confirm_action("reset", collection_name):
+                    # Delete and recreate the collection
+                    client.delete_collection(collection_name)
+                    collection = client.create_collection(
+                        name=collection_name,
+                        metadata={"description": f"Memory store for {collection_name}"}
+                    )
+                    print(f"Reset collection: {collection_name}")
+                else:
+                    print(f"Skipping collection: {collection_name}")
+                    continue
+            else:
+                collection = client.create_collection(
+                    name=collection_name,
+                    metadata={"description": f"Memory store for {collection_name}"}
+                )
+                print(f"Initialized new collection: {collection_name}")
+            
+        print(f"\nCollection initialization complete for {agent_name}")
+        
+    except Exception as e:
+        print(f"Error initializing collections: {str(e)}")
+
 async def main():
     parser = argparse.ArgumentParser(description="ChromaDB CLI Tool")
     parser.add_argument("--list", action="store_true", help="List all collections")
@@ -167,6 +209,7 @@ async def main():
     parser.add_argument("--show", type=str, help="Show complete documents in specified collection")
     parser.add_argument("--reset", type=str, help="Reset (clear) a collection or 'all' collections")
     parser.add_argument("--delete", type=str, help="Delete a collection or 'all' collections")
+    parser.add_argument("--init", type=str, help="Initialize collections for specified agent name")
     
     args = parser.parse_args()
     
@@ -182,6 +225,8 @@ async def main():
         await reset_collection(client, args.reset)
     elif args.delete:
         await delete_collection(client, args.delete)
+    elif args.init:
+        await initialize_collections(client, args.init)
     else:
         parser.print_help()
 

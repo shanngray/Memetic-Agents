@@ -39,7 +39,7 @@ class AgentDirectory(BaseModel):
     address: str = Field(..., description="Network address where the agent is hosted")
     port: int = Field(..., description="Port number the agent is listening on")
     agent_type: str = Field(..., description="Classification of the agent")
-    agent_status: str = Field(default="idle", description="Agent's current internal status")
+    agent_status: str = Field(default="AVAILABLE", description="Agent's current internal status")
     status: str = Field(default="active", description="Current operational status (server defined)")
     description: str = Field(..., description="Human-readable description of capabilities")
     tools: List[str] = Field(..., description="List of available tools")

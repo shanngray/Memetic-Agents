@@ -1,43 +1,39 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/reflect-memories-prompt-schema.json",
-  "title": "Output Schema for Memory Reflection Prompt",
-  "description": "Memetic Agent Output Schema for Reflecting on Interactions and Learning",
-  "type": "array",
-  "items": {
-    "type": "object",
-    "properties": {
-      "lesson": {
-        "type": "string",
-        "description": "The comprehensive lesson learned from the interaction"
-      },
-      "importance": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 1,
-        "description": "Importance level of the lesson"
-      },
-      "category": {
-        "type": "string",
-        "enum": [
-          "tools",
-          "agentic structure",
-          "giving feedback",
-          "memory reflection",
-          "long term memory transfer",
-          "thought loop",
-          "reasoning",
-          "self improvement",
-          "insight"
-        ],
-        "description": "Classification of the lesson type"
-      },
-      "thoughts": {
-        "type": "string",
-        "description": "Analysis of the memory and its usefulness"
+  "output_format": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "required": ["lesson", "importance", "category", "thoughts"],
+      "properties": {
+        "lesson": {
+          "type": "string",
+          "description": "The comprehensive lesson learned from the interaction"
+        },
+        "importance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Importance level of the lesson (0-1)"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "tools",
+            "agentic structure",
+            "giving feedback",
+            "memory reflection",
+            "long term memory transfer",
+            "thought loop",
+            "reasoning",
+            "self improvement",
+            "insight"
+          ]
+        },
+        "thoughts": {
+          "type": "string",
+          "description": "Analysis of the memory and its usefulness"
+        }
       }
-    },
-    "required": ["lesson", "importance", "category", "thoughts"],
-    "additionalProperties": false
+    }
   }
 }

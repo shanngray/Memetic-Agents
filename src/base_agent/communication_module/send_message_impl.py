@@ -9,7 +9,6 @@ from src.api_server.models.api_models import APIMessage
 
 async def send_message_impl(agent: Agent, receiver: str, content: str) -> Dict[str, Any]:
     """Send a message via API to another agent registered in the directory service."""
-    await agent.set_status(AgentStatus.WAITING_RESPONSE, "waiting for agent response")
     sender = agent.config.agent_name
 
     if sender == receiver:
@@ -69,9 +68,6 @@ async def send_message_impl(agent: Agent, receiver: str, content: str) -> Dict[s
                 response_content=message_content
             ))
             
-            # After receiving response
-            await agent.set_status(AgentStatus.TOOL_EXECUTING, "received agent response")
-            
             return {
                 "role": "assistant",
                 "content": message_content,
@@ -94,5 +90,5 @@ async def send_message_impl(agent: Agent, receiver: str, content: str) -> Dict[s
             log_error(agent.logger, f"Unexpected error in send_message", exc_info=e)
             raise
         finally:
-            if agent.status == AgentStatus.MESSAGE_PROCESSING or agent.status == AgentStatus.WAITING_RESPONSE:
-                await agent.set_status(AgentStatus.TOOL_EXECUTING, "completed send_message")
+            log_event(agent.logger, "agent.message_sent", 
+                     f"Message sent to {receiver} with content: {content}")

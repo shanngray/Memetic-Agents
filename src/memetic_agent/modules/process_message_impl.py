@@ -15,7 +15,6 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
     if agent.status == AgentStatus.SHUTTING_DOWN:
         raise ValueError("Agent is shutting down")
 
-    await agent.set_status(AgentStatus.MESSAGE_PROCESSING, "processing message")
     try:
         log_event(agent.logger, "session.started", 
                     f"Processing message from {sender} in conversation {conversation_id}")
@@ -46,7 +45,8 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
             )
             messages.append(user_message)
             log_event(agent.logger, "message.added", 
-                        f"Added user message to conversation {conversation_id}")
+                        f"Added user message to conversation {conversation_id}",
+                        level="DEBUG")
 
         final_response = None
         iteration_count = 0
@@ -117,7 +117,6 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                 
                 # Process tool calls if present
                 if raw_message.tool_calls:
-                    await agent.set_status(AgentStatus.TOOL_EXECUTING, "executing tools")
                     log_event(agent.logger, "tool.processing", 
                                 f"Processing {len(raw_message.tool_calls)} tool calls")
                     
@@ -174,7 +173,6 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                             log_error(agent.logger, 
                                         f"Tool error in {tool_call.function['name']}: {str(e)}")
                                             
-                    await agent.set_status(AgentStatus.MESSAGE_PROCESSING, "tools completed")
                     continue  # Continue loop to process tool results
                 
                 # If we have a message without tool calls, evaluate to see if we should continue or stop
@@ -223,6 +221,4 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
 
     finally:
         # Reset status and context
-        if agent.status != AgentStatus.SHUTTING_DOWN:
-            await agent.set_status(AgentStatus.QUEUE_PROCESSING, "finished message processing")
         agent.current_conversation_id.reset(token)

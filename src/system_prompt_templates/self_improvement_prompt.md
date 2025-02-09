@@ -18,9 +18,3 @@ When modifying the prompt:
 7. If an output schema is provided, ensure the output still matches the schema.
 
 Remember: Changes should be evolutionary rather than revolutionary, maintaining system stability while improving performance.
-
-Format the response as a JSON array of objects, where each object has:  
-{
-    "prompt": "The improved prompt.",
-    "thoughts": "Your thoughts on the prompt and its improvements."
-}

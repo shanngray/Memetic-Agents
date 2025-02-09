@@ -36,11 +36,11 @@ class Agent:
         """
         self.config = config or AgentConfig()
         self.client = AsyncOpenAI(api_key=api_key)
-        self.logger = setup_logger(f"agent.{self.config.agent_name}")
+        self.logger = setup_logger(self.config.agent_name)
 
         # Core state attributes
-        self.status = AgentStatus.IDLE
-        self._previous_status = AgentStatus.IDLE
+        self.status = AgentStatus.AVAILABLE
+        self._previous_status = AgentStatus.AVAILABLE
         self._status_history: List[Dict[str, Any]] = []
         self._status_lock = asyncio.Lock()
         self._shutdown_event = asyncio.Event()
@@ -57,11 +57,30 @@ class Agent:
         self._reflect_memories_prompt = "Placeholder for reflecting on memories"
         self._self_improvement_prompt = "Placeholder for self improvement"
 
+        # System Prompt Schemas - schemas are in json format but stored as strings
+        self._xfer_long_term_schema: str = ""
+        self._reflect_memories_schema: str = ""
+        self._self_improvement_schema: str = ""
+        self._give_feedback_schema: str = ""
+
+        # System Prompt Confidence Scores (Floating Point between 0 and 10)
+        self._prompt_confidence_scores = {
+            "system": 0.0,
+            "give_feedback": 0.0,
+            "thought_loop": 0.0,
+            "xfer_long_term": 0.0,
+            "xfer_feedback": 0.0,
+            "reflect_feedback": 0.0,
+            "evaluator": 0.0,
+            "reasoning": 0.0,
+            "reflect_memories": 0.0,
+            "self_improvement": 0.0
+        }
 
         # Request handling
         self.pending_requests: Dict[str, asyncio.Future] = {}
         self.request_queue: asyncio.Queue = asyncio.Queue()
-        self.waiting_for: Optional[str] = None
+        self.waiting_for: Optional[str] = None # TODO: Is this even used????
         
         # Tool management
         self.tools: Dict[str, Dict[str, Any]] = {}
@@ -77,6 +96,9 @@ class Agent:
         self.files_path.mkdir(parents=True, exist_ok=True)
         self.agent_directory = None
 
+    async def initialize(self) -> None:
+        """Async initialization to load all required files. Run from server.py"""
+        raise NotImplementedError("Subclasses must implement initialize")
     #TODO: the prompt_mapping needs to be kept in sync with both individual agents prompts and the master list of prompts
     def get_prompt_mapping(self) -> dict[str, str]:
         """Returns a mapping of prompt names to their current values."""
@@ -91,6 +113,20 @@ class Agent:
             "xfer_long_term_prompt": self._xfer_long_term_prompt,
             "evaluator_prompt": self._evaluator_prompt
         }
+
+    def get_prompt_schema(self, prompt_name: str) -> str | None:
+        """Returns the schema for a given prompt name."""
+        if prompt_name == "xfer_long_term_prompt":
+            return self._xfer_long_term_schema
+        elif prompt_name == "reflect_memories_prompt":
+            return self._reflect_memories_schema
+        elif prompt_name == "self_improvement_prompt":
+            return self._self_improvement_schema
+        elif prompt_name == "give_feedback_prompt":
+            return self._give_feedback_schema
+        else:
+            return None
+
 
     async def process_message(self, content: str, sender: str, conversation_id: str) -> str:
         """Process an incoming message.
@@ -243,3 +279,74 @@ class Agent:
             NotImplementedError: Must be implemented by subclasses
         """
         raise NotImplementedError("Subclasses must implement _save_memory_to_disk")
+
+    async def _record_score(self, prompt_type: str, prompt_score: int, conversation_id: str, score_type: str) -> None:
+        """Record a score for a prompt.
+        
+        Args:
+            prompt_type: Type of prompt being evaluated
+            prompt_score: Score for the prompt (0-10)
+            conversation_id: ID of the conversation thread
+            score_type: Type of score being recorded
+        
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        raise NotImplementedError("Subclasses must implement _record_score")
+
+    async def _update_confidence_score(self, prompt_type: str, initial_friend_score: int, 
+                                     updated_friend_score: int, self_eval_score: int) -> None:
+        """Calculate and update confidence score for a prompt type based on interaction scores.
+        
+        Args:
+            prompt_type: Type of prompt being scored
+            initial_friend_score: Friend's initial evaluation score (0-10)
+            updated_friend_score: Friend's evaluation of updated prompt (0-10)
+            self_eval_score: Agent's self-evaluation score (0-10)
+            
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        raise NotImplementedError("Subclasses must implement _update_confidence_score")
+
+    async def _evaluate_prompt(self, prompt_type: str, prompt: str) -> int:
+        """Evaluate a prompt and update confidence scores.
+        
+        Args:
+            prompt_type: Type of prompt being evaluated
+            prompt: The prompt to evaluate
+        
+        Returns:
+            int: The score for the prompt (0-10)
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        raise NotImplementedError("Subclasses must implement _evaluate_prompt")
+
+    def _calculate_updated_confidence_score(self, prompt_type: str, new_score: int) -> None:
+        """Calculate the updated confidence score for the prompt.
+        
+        Args:
+            prompt_type: Type of prompt being scored
+            new_score: The new score for the prompt (0-10)
+            
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        raise NotImplementedError("Subclasses must implement _calculate_updated_confidence_score")
+
+    async def update_prompt_module(self, prompt_type: str, new_prompt: str) -> str:
+        """Update a specific prompt module with backup functionality.
+        
+        Args:
+            prompt_type: Type of prompt to update (reasoning, give_feedback, thought_loop, etc.)
+            new_prompt: The new prompt content
+        
+        Returns:
+            str: Success message
+        
+        Raises:
+            ValueError: If prompt type is invalid or update fails
+        """
+        raise NotImplementedError("Subclasses must implement update_prompt_module")

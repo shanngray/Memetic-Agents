@@ -12,8 +12,6 @@ async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
     sender = message.sender
     content = message.content
     conversation_id = message.conversation_id
-    prompt = getattr(message, 'prompt', None)
-    await agent.set_status(AgentStatus.MESSAGE_RECEIVED, "processing received message")
     log_event(agent.logger, "agent.message_received", 
               f"Message from {sender} in conversation {conversation_id}")
     log_event(agent.logger, "message.content", f"{content}", level="DEBUG")
@@ -55,7 +53,9 @@ async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
         "id": request_id,
         "sender": sender,
         "content": content,
-        "prompt": prompt,
+        "prompt": None,
+        "evaluation": None,
+        "message_type": None,
         "conversation_id": conversation_id,
         "timestamp": datetime.now().isoformat(),
         "queue_position": queue_position
@@ -63,13 +63,12 @@ async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
     log_event(agent.logger, "queue.added", 
               f"Queuing request {request_id} from {sender} (position {queue_position} in queue)")
     
-    await agent.request_queue.put(request)
-    await agent.set_status(AgentStatus.QUEUE_PROCESSING, "start processing queue") # Should this go before or after the request_queue.put?
+    # Create task for queue processing
+    queue_task = asyncio.create_task(agent.request_queue.put(request))
+    await queue_task
 
     try:
         # Wait for response with timeout
-        if agent.status == AgentStatus.QUEUE_PROCESSING:
-            await agent.set_status(AgentStatus.WAITING_RESPONSE, "waiting for queue processing")
         log_event(agent.logger, "queue.status", 
                  f"Request {request_id} waiting at position {queue_position}", level="DEBUG")
         response = await asyncio.wait_for(future, timeout=300.0)
@@ -87,7 +86,5 @@ async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
             log_event(agent.logger, "queue.status", 
                      f"Cleaned up request {request_id} (was position {queue_position})", 
                      level="DEBUG")
-        if agent.status != AgentStatus.SHUTTING_DOWN:
-            await agent.set_status(AgentStatus.IDLE, "completed message processing")
 
 
