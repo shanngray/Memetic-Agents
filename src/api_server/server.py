@@ -36,7 +36,7 @@ def refresh_enums():
     importlib.reload(sys.modules['base_agent.models'])
     global AgentStatus
     from base_agent.models import AgentStatus
-    logger.info("Current AgentStatus values: %s", [s.value for s in AgentStatus])
+    log_event(logger, "server.status.update", "Current AgentStatus values: %s", [s.value for s in AgentStatus], level="DEBUG")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -806,7 +806,5 @@ class StatusUpdate(BaseModel):
 # Verification test to run on the server
 from base_agent.models import AgentStatus
 
-print("Socialising value:", AgentStatus.SOCIALISING.value)  # Should be 8
-print("All values:", [s.value for s in AgentStatus])  # Should include 0-9
 
 

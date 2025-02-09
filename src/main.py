@@ -8,18 +8,18 @@ import signal
 sys.path.append(str(Path(__file__).parents[1]))
 
 from src.api_server.server import start_server, setup_agent_server
-from src.log_config import setup_logger
+from src.log_config import setup_logger, log_event, log_error
 from src.database.chroma_database import get_chroma_client
 
 # Setup logging
 logger = setup_logger(
-    name="ServerMain",
+    name="MainProcess",
     level=os.getenv("SERVER_LOG_LEVEL", "INFO"),
     console_logging=os.getenv("CONSOLE_LOGGING", "True").lower() == "true"
 )
 
 async def main():
-    logger.info("Starting main application")
+    log_event(logger, "main.start", "Starting main application")
     
     # Create lists to track tasks and servers
     all_tasks = []
@@ -29,7 +29,7 @@ async def main():
     try:
         # Initialize single ChromaDB client
         chroma_client = await get_chroma_client()
-        logger.info("Initialized ChromaDB client")
+        log_event(logger, "main.start", "Initialized ChromaDB client")
         
         # Start the directory service
         directory_task, directory_server = await start_server()

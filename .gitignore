@@ -52,6 +52,7 @@ chroma_db/
 logs/
 SYSTEM PROMPT.md
 SYSTEM_PROMPT_2.md
+ignored/
 
 # Testing
 .coverage
