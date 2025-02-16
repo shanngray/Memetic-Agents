@@ -22,8 +22,10 @@ class AgentConfig(BaseModel):
         log_file: Enable log file
         memory_store_path: Path to memory store directory
         temperature: Controls randomness in model outputs (0.0-1.0)
+        reasoning_effort: 03-mini only (low, medium, high)
     """
     model: str = "gpt-4o-mini"
+    submodel: str = "gpt-4o-mini"
     temperature: float = 0.8
     system_prompt: str = "You are a helpful AI assistant."
     max_history: int = 100
@@ -39,6 +41,6 @@ class AgentConfig(BaseModel):
     api_port: int  # Added api_port field
     api_host: str = "localhost"  # Add this parameter
     memory_store_path: Path = Path(__file__).parent.parent.parent / "agent_memory"
-
+    reasoning_effort: str = "low"
     class Config:
         env_prefix = "AGENT_"  # Allow env vars like AGENT_MODEL to override

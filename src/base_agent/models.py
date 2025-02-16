@@ -57,16 +57,18 @@ class AgentStatus(IntEnum):
     LEARNING = 1
     MEMORISING = 2
     SOCIALISING = 3
-    SHUTTING_DOWN = 4
+    SLEEPING = 4
+    SHUTTING_DOWN = 5
 
     @classmethod
     def get_valid_transitions(cls, current_status: 'AgentStatus') -> Set['AgentStatus']:
         """Define valid status transitions."""
         VALID_TRANSITIONS = {
-            cls.AVAILABLE: {cls.LEARNING, cls.MEMORISING, cls.SOCIALISING, cls.SHUTTING_DOWN},
+            cls.AVAILABLE: {cls.LEARNING, cls.MEMORISING, cls.SOCIALISING, cls.SLEEPING, cls.SHUTTING_DOWN},
             cls.LEARNING: {cls.AVAILABLE, cls.SHUTTING_DOWN},
             cls.MEMORISING: {cls.AVAILABLE, cls.SHUTTING_DOWN},
             cls.SOCIALISING: {cls.AVAILABLE, cls.SHUTTING_DOWN},
+            cls.SLEEPING: {cls.AVAILABLE, cls.SHUTTING_DOWN},
             cls.SHUTTING_DOWN: set()
         }
         return VALID_TRANSITIONS.get(current_status, set())

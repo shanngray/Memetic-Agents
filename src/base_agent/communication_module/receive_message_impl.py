@@ -32,14 +32,21 @@ async def receive_message_impl(agent:Agent, message: APIMessage) -> str:
     elif conversation_id in agent.old_conversation_list:
         # We have a long term conversation, so we need to load it into the conversation history and update the current conversation_id
         agent.current_conversation_id.set(conversation_id)
-        agent.conversations[conversation_id].append(Message(role="system", content="This is an old conversation, you may have memories in longer_term memory that will help with context."))
+        agent.conversations[conversation_id].append(Message(
+            role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system", 
+            content="This is an old conversation, you may have memories in longer_term memory that will help with context."
+            )
+        )
         pass
     else:
         # This is a new conversation, we need to update the conversation list and the current conversation_id
         log_event(agent.logger, "session.created", f"Creating new conversation: {conversation_id}")
         agent.current_conversation_id.set(conversation_id)
         agent.conversations[conversation_id] = [
-            Message(role="system", content=agent._system_prompt)
+            Message(
+                role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system", 
+                content=agent._system_prompt
+            )
         ]
         pass
 

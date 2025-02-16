@@ -89,3 +89,4 @@ src/agents/store/create_editor_agent.py
 src/agents/store/create_math_agent.py
 src/agents/store/create_research_agent.py
 src/agents/store/create_time_agent.py
+docs/social-sequence-flow.md

@@ -12,25 +12,47 @@ sys.path.append(str(Path(__file__).parents[1]))
 from base_agent.config import AgentConfig
 from memetic_agent.memetic_agent import MemeticAgent
 
+# Default confidence scores for new agents
+default_scores = {
+    "system": 0.0,
+    "give_feedback": 0.0,
+    "thought_loop": 0.0,
+    "xfer_long_term": 0.0,
+    "xfer_feedback": 0.0,
+    "reflect_feedback": 0.0,
+    "evaluator": 0.0,
+    "reasoning": 0.0,
+    "reflect_memories": 0.0,
+    "self_improvement": 0.0
+}
 
 def create_agent_folder_structure(agent_name: str) -> Path:
     """Create the required folder structure for a new agent."""
     base_path = Path("agent_files") / agent_name
     prompt_modules_path = base_path / "prompt_modules"
+    schemas_path = prompt_modules_path / "schemas"
     scores_path = prompt_modules_path / "scores"
     
     # Create directories
+    base_path.mkdir(parents=True, exist_ok=True)
     prompt_modules_path.mkdir(parents=True, exist_ok=True)
+    schemas_path.mkdir(parents=True, exist_ok=True)
     scores_path.mkdir(parents=True, exist_ok=True)
     
     # Copy base prompt templates
     base_prompts_path = Path("src/system_prompt_templates")
+    print(f"Source prompts path: {base_prompts_path} (exists: {base_prompts_path.exists()})")
+    print(f"Destination path: {prompt_modules_path} (exists: {prompt_modules_path.exists()})")
+    
     for prompt_file in base_prompts_path.glob("*.md"):
-        shutil.copy2(prompt_file, prompt_modules_path / prompt_file.name)
+        dest_file = prompt_modules_path / prompt_file.name
+        print(f"Copying {prompt_file} to {dest_file}")
+        shutil.copy2(prompt_file, dest_file)
+        print(f"Destination file exists: {dest_file.exists()}")
 
     base_schemas_path = Path("src/system_prompt_templates/schemas")
     for schema_file in base_schemas_path.glob("*.json"):
-        shutil.copy2(schema_file, prompt_modules_path / schema_file.name)
+        shutil.copy2(schema_file, schemas_path / schema_file.name)
     
     # Write confidence scores to new location
     confidence_scores_path = scores_path / "prompt_confidence_scores.json"
@@ -43,7 +65,8 @@ def get_agent_config_from_user() -> Dict:
     questions = [
         inquirer.Text('agent_name', message="What is the name of your agent?"),
         inquirer.Text('description', message="Provide a brief description of your agent"),
-        inquirer.Text('model', message="Which model should the agent use?", default="gpt-4o-mini"),
+        inquirer.Text('model', message="Which model should the agent use?", default="gpt-4o"),
+        inquirer.Text('submodel', message="Which submodel should the agent use?", default="gpt-4o-mini"),
         inquirer.List('console_logging', 
                      message="Enable console logging?",
                      choices=['True', 'False'],
@@ -56,7 +79,7 @@ def get_agent_config_from_user() -> Dict:
                      validate=lambda _, x: 0 <= float(x) <= 2,
                      default="1.0"),
         inquirer.Checkbox('enabled_tools',
-                         message="Select enabled tools",
+                         message="Select enabled tools (Space to select/unselect, Enter to confirm)",
                          choices=['agent_search', 'list_agents', 'web_search'],
                          default=['agent_search', 'list_agents'])
     ]
@@ -90,6 +113,7 @@ def create_{config_data["agent_name"].lower()}_agent(chroma_client: PersistentCl
         debug=os.getenv("AGENT_DEBUG", "false").lower() == "true",
         console_logging={config_data["console_logging"]},
         model="{config_data["model"]}",
+        submodel="{config_data["submodel"]}",
         temperature={config_data["temperature"]},
         system_prompt=system_prompt,
         agent_name="{config_data["agent_name"]}",
@@ -97,7 +121,8 @@ def create_{config_data["agent_name"].lower()}_agent(chroma_client: PersistentCl
         enabled_tools={config_data["enabled_tools"]},
         api_port={config_data["api_port"]},
         log_path=Path("logs"),
-        log_level=os.getenv("AGENT_LOG_LEVEL", "DEBUG")
+        log_level=os.getenv("AGENT_LOG_LEVEL", "DEBUG"),
+        reasoning_effort="low"
     )
     
     agent = MemeticAgent(

@@ -50,29 +50,53 @@ async def main():
                 # Import and create the agent
                 module_name = f"src.agents.{agent_file.stem}"
                 function_name = f"create_{agent_name}_agent"
+                
+                log_event(logger, "agent.import", f"Importing agent module: {module_name}")
                 module = __import__(module_name, fromlist=[function_name])
                 create_func = getattr(module, function_name)
                 
-                logger.info(f"Waking up {agent_name} agent")
+                log_event(logger, "agent.create", f"Loading agent:      {agent_name}")
                 agent = create_func(chroma_client=chroma_client)
                 
+                # For memetic agents, ensure initialization is complete
+                if hasattr(agent, 'initialize'):
+                    log_event(logger, "agent.init", f"Initializing agent:       {agent_name}")
+                    try:
+                        await agent.initialize()
+                    except Exception as e:
+                        log_error(logger, f"Failed to initialize {agent_name} agent: {str(e)}")
+                        continue
+                
                 # Setup agent and get tasks
+                log_event(logger, "agent.setup", f"Setting up {agent_name} agent server")
                 agent, tasks = await setup_agent_server(agent)
                 running_agents.append(agent)
                 all_tasks.extend(tasks)
                 
+                log_event(logger, "agent.ready", f"{agent_name} agent ready")
+                
+            except ImportError as e:
+                log_error(logger, f"Failed to import {agent_name} agent module: {str(e)}")
+                continue
+            except AttributeError as e:
+                log_error(logger, f"Failed to find create function for {agent_name} agent: {str(e)}")
+                continue
             except Exception as e:
-                logger.error(f"Error setting up {agent_name} agent: {str(e)}")
+                log_error(logger, f"Unexpected error setting up {agent_name} agent: {str(e)}")
                 continue
         
-        logger.info("All agents started successfully")
+        if not running_agents:
+            log_error(logger, "No agents were successfully started")
+            return
+            
+        log_event(logger, "main.agents.ready", f"Successfully started {len(running_agents)} agents")
         
         # Wait for shutdown signal
         shutdown_event = asyncio.Event()
         try:
             await shutdown_event.wait()
         except asyncio.CancelledError:
-            logger.info("Received shutdown signal")
+            log_event(logger, "main.shutdown", "Received shutdown signal")
             
     except asyncio.CancelledError:
         logger.info("Shutdown initiated")
@@ -103,14 +127,21 @@ async def main():
                 done, pending = await asyncio.wait(all_tasks, timeout=5.0)
                 for task in pending:
                     task.cancel()
-                await asyncio.wait(pending, timeout=1.0)
+                if pending:  # Only wait if there are pending tasks
+                    await asyncio.wait(pending, timeout=1.0)
             except Exception as e:
-                logger.error(f"Error during task shutdown: {str(e)}")
+                if "Set of Tasks/Futures is empty" not in str(e):  # Ignore empty set error
+                    logger.error(f"Error during task shutdown: {str(e)}")
         
         # Shutdown all Uvicorn servers
         for server in running_servers:
             try:
-                await server.shutdown()
+                # Uvicorn servers should be stopped using their .should_exit property
+                if hasattr(server, 'should_exit'):
+                    server.should_exit = True
+                    await asyncio.sleep(0.1)  # Give server time to process shutdown
+                elif hasattr(server, 'shutdown'):
+                    await server.shutdown()
             except Exception as e:
                 logger.error(f"Error shutting down server: {str(e)}")
         

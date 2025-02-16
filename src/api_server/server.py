@@ -36,7 +36,12 @@ def refresh_enums():
     importlib.reload(sys.modules['base_agent.models'])
     global AgentStatus
     from base_agent.models import AgentStatus
-    log_event(logger, "server.status.update", "Current AgentStatus values: %s", [s.value for s in AgentStatus], level="DEBUG")
+    log_event(
+        logger,
+        "server.status.update",
+        f"Current AgentStatus values: {[s.value for s in AgentStatus]}",
+        level="DEBUG"
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -121,7 +126,18 @@ async def start_directory_service():
                     timeout=3000.0
                 )
                 response.raise_for_status()
-                return response.json()
+                response_data = response.json()
+                
+                # Ensure response is properly formatted
+                if isinstance(response_data, dict):
+                    return {
+                        "success": True,
+                        "message": response_data.get('message', response_data)
+                    }
+                return {
+                    "success": True,
+                    "message": response_data
+                }
             
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail="Request timed out")

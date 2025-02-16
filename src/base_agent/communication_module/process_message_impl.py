@@ -23,7 +23,10 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
 
         if conversation_id not in agent.conversations:
             agent.conversations[conversation_id] = [
-                Message(role="system", content=agent._system_prompt)
+                Message(
+                    role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system", 
+                    content=agent._system_prompt
+                    )
             ]
         
         messages = agent.conversations[conversation_id]
@@ -56,10 +59,11 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                 response = await asyncio.wait_for(
                     agent.client.chat.completions.create(
                         model=agent.config.model,
-                        temperature=agent.config.temperature,
+                        **({"temperature": agent.config.temperature} if agent.config.model not in ["o1-mini", "o3-mini"] else {}),
                         messages=[m.dict() for m in messages],
                         tools=list(agent.tools.values()) if agent.tools else None,
-                        timeout=3000
+                        timeout=3000,
+                        **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
                     ),
                     timeout=3050
                 )

@@ -88,6 +88,9 @@ async def learning_subroutine(agent: Agent, category: str = None) -> None:
             existing_prompt = agent._give_feedback_prompt
             output_schema = agent._give_feedback_schema
             prompt_type = "give_feedback"
+        case "feedback reflection":
+            existing_prompt = agent._reflect_feedback_prompt
+            prompt_type = "reflect_feedback"
         case "memory reflection":
             existing_prompt = agent._reflect_memories_prompt
             output_schema = agent._reflect_memories_schema
@@ -106,6 +109,12 @@ async def learning_subroutine(agent: Agent, category: str = None) -> None:
             existing_prompt = agent._self_improvement_prompt
             output_schema = agent._self_improvement_schema
             prompt_type = "self_improvement"
+        case "system prompt":
+            existing_prompt = agent._system_prompt
+            prompt_type = "system_prompt"
+        case "evaluator":
+            existing_prompt = agent._evaluator_prompt
+            prompt_type = "evaluator"
         case "insight":
             pass
     
@@ -151,7 +160,8 @@ async def learning_subroutine(agent: Agent, category: str = None) -> None:
                 {"role": "system", "content": full_prompt},
                 {"role": "user", "content": consolidated_content}
             ],
-            response_format={ "type": "json_object" }
+            response_format={ "type": "json_object" },
+            **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
         )
 
     try:
@@ -178,5 +188,13 @@ async def learning_subroutine(agent: Agent, category: str = None) -> None:
     updated_score = await agent._evaluate_prompt(f"{prompt_type}_prompt", improved_prompt) # Always run before updating prompt
     await agent._calculate_updated_confidence_score(prompt_type, updated_score)
     await agent.update_prompt_module(f"{prompt_type}_prompt", improved_prompt)
+
+    # Cleanup used reflections
+    deleted_count = await agent.memory.delete_by_metadata(
+        collection_name="reflections",
+        metadata_filter={"category": category}
+    )
+    log_event(agent.logger, "agent.learning", 
+             f"Cleaned up {deleted_count} processed reflections for category: {category}")
 
     await agent.set_status(AgentStatus.AVAILABLE, "completed learning subroutine")

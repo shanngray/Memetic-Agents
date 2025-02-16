@@ -67,6 +67,13 @@ async def process_queue_impl(agent: Agent):
                     request_id=request_id
                 )
                 
+                # Set the future result so receive_message_impl gets the response
+                if request["id"] in agent.pending_requests:
+                    agent.pending_requests[request["id"]].set_result(response)
+                    log_event(agent.logger, "queue.completed", 
+                             f"Request {request['id']} processed successfully")
+                    del agent.pending_requests[request["id"]]
+
                 # Yield control after heavy processing
                 await asyncio.sleep(0.1)
 
@@ -77,13 +84,18 @@ async def process_queue_impl(agent: Agent):
                 log_error(agent.logger, 
                          f"Error processing request {request['id'] if request else 'unknown'}: {str(e)}", 
                          exc_info=e)
+                # Set exception on future if there's an error
+                if request and request["id"] in agent.pending_requests:
+                    agent.pending_requests[request["id"]].set_exception(e)
+                    del agent.pending_requests[request["id"]]
             finally:
                 if request:
-                    # Only mark task as done, cleanup is handled in process_social_message_impl
                     agent.request_queue.task_done()
-                    log_event(agent.logger, "queue.status", 
-                             f"Marked queue task done for request {request.get('id')}", 
-                             level="DEBUG")
+                    if agent.status != AgentStatus.SHUTTING_DOWN:
+                        log_event(agent.logger, "agent.status", 
+                                 f"Agent Status changed from {agent.status.name} to AVAILABLE", 
+                                 level="DEBUG")
+                        await agent.set_status(AgentStatus.AVAILABLE, "completed message processing")
                 
     except Exception as e:
         log_error(agent.logger, f"Critical error in process_queue: {str(e)}", exc_info=e)

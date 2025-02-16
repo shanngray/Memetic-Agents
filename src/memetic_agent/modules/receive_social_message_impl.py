@@ -41,7 +41,10 @@ async def receive_social_message_impl(agent:Agent, message: SocialMessage) -> st
     elif conversation_id in agent.old_conversation_list:
         # We have a long term conversation, so we need to load it into the conversation history and update the current conversation_id
         agent.current_conversation_id.set(conversation_id)
-        agent.conversations[conversation_id].append(Message(role="system", content="This is an old conversation, you may have memories in longer_term memory that will help with context."))
+        agent.conversations[conversation_id].append(Message(
+            role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system", 
+            content="This is an old conversation, you may have memories in longer_term memory that will help with context."
+            ))
         log_event(agent.logger, "social.conversation.long", f"We have a long term social conversation: {conversation_id}")
         pass
     else:
@@ -49,7 +52,10 @@ async def receive_social_message_impl(agent:Agent, message: SocialMessage) -> st
         log_event(agent.logger, "social.conversation.new", f"Creating new social conversation: {conversation_id}")
         agent.current_conversation_id.set(conversation_id)
         agent.conversations[conversation_id] = [
-            Message(role="system", content=agent._system_prompt)
+            Message(
+                role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system", 
+                content=agent._system_prompt
+                )
         ]
         pass
 

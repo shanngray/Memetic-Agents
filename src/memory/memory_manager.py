@@ -251,3 +251,36 @@ class MemoryManager:
         except Exception as e:
             log_error(self.logger, f"Failed to get feedback stats: {str(e)}")
             return {"error": str(e)}
+
+    async def delete_by_metadata(
+        self,
+        collection_name: str,
+        metadata_filter: Dict[str, Any]
+    ) -> int:
+        """Delete all memories matching the metadata filter from specified collection.
+        
+        Args:
+            collection_name: Name of collection to delete from
+            metadata_filter: Dictionary of metadata key-value pairs to match
+            
+        Returns:
+            int: Number of memories deleted
+        """
+        try:
+            collection = self._get_collection(collection_name)
+            
+            # Get matching records to count them
+            matching_records = collection.get(where=metadata_filter)
+            num_deleted = len(matching_records["ids"]) if matching_records["ids"] else 0
+            
+            # Delete matching records
+            collection.delete(where=metadata_filter)
+            
+            log_event(self.logger, "memory.bulk_deleted", 
+                     f"Deleted {num_deleted} memories from {collection_name} matching filter: {metadata_filter}")
+            
+            return num_deleted
+            
+        except Exception as e:
+            log_error(self.logger, f"Failed to bulk delete memories: {str(e)}")
+            raise

@@ -10,13 +10,15 @@ def create_name_agent(chroma_client: PersistentClient) -> BaseAgent:
         debug=os.getenv("AGENT_DEBUG", "false").lower() == "true",
         console_logging=False,
         model="gpt-4o-mini",
+        submodel="gpt-4o-mini",
         system_prompt="""enter system prompt here""",
         agent_name="NameAgent",
         description="description of agent",
         enabled_tools=["agent_search", "list_agents"],
         api_port=0000,
         log_path=Path("logs"),
-        log_level=os.getenv("AGENT_LOG_LEVEL", "DEBUG")
+        log_level=os.getenv("AGENT_LOG_LEVEL", "DEBUG"),
+        reasoning_effort="low"
     )
     
     agent = BaseAgent(

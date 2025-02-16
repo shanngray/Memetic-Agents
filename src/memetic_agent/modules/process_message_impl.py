@@ -25,7 +25,10 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
 
         if conversation_id not in agent.conversations:
             agent.conversations[conversation_id] = [
-                Message(role="system", content=agent._system_prompt)
+                Message(
+                    role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system", 
+                    content=agent._system_prompt
+                    )
             ]
         
         messages = agent.conversations[conversation_id]
@@ -53,45 +56,45 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
         max_iterations = 10
         while iteration_count < max_iterations:
             try:
+                log_event(agent.logger, "message.iteration", 
+                         f"Starting iteration {iteration_count}", level="DEBUG")
+                
                 log_event(agent.logger, "openai.request", 
                             f"Sending request to OpenAI with {len(messages)} messages")
                 
                 response = await asyncio.wait_for(
                     agent.client.chat.completions.create(
                         model=agent.config.model,
-                        temperature=agent.config.temperature,
+                        **({"temperature": agent.config.temperature} if agent.config.model not in ["o1-mini", "o3-mini"] else {}),
                         messages=[m.dict() for m in messages],
                         tools=list(agent.tools.values()) if agent.tools else None,
-                        timeout=3000
+                        **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
                     ),
                     timeout=3050
                 )
-                print("\n|---------------PROCESS MESSAGE-----------------|\n")
-                print("ITERATION:", iteration_count)
-                print("\nAGENT NAME:", agent.config.agent_name)
-                # Print response details
-                print("\nResponse Details:")
-                print(f"  Model: {response.model}")
-                print(f"  Created: {response.created}")
-                
-                # Print message details
-                print("\nMessage Details:")
-                message = response.choices[0].message
-                print(f"  Role: {message.role}")
-                print(f"  Content: {message.content}")
-                
-                # Print tool call details if present
-                if message.tool_calls:
-                    print("\nTool Calls:")
-                    for tc in message.tool_calls:
-                        print(f"\n  Tool Call ID: {tc.id}")
-                        print(f"  Type: {tc.type}")
-                        print(f"  Function Name: {tc.function.name}")
-                        print(f"  Arguments: {tc.function.arguments}")
-                print("\n|----------------------------------------------|\n")
 
-                raw_message = response.choices[0].message
-                message_content = raw_message.content or ""
+                # Log response details
+                log_event(agent.logger, "message.details.raw", 
+                         f"Model: {response.model}, Created: {response.created}", 
+                         level="DEBUG")
+                
+                # Log message details
+                message = response.choices[0].message
+                log_event(agent.logger, "message.details", 
+                         f"Role: {message.role}\nContent: {message.content}", 
+                         level="INFO")
+                
+                # Log tool call details if present
+                if message.tool_calls:
+                    for tc in message.tool_calls:
+                        log_event(agent.logger, "tool.details",
+                                 f"Tool Call ID: {tc.id}\n"
+                                 f"Type: {tc.type}\n"
+                                 f"Function: {tc.function.name}\n"
+                                 f"Arguments: {tc.function.arguments}",
+                                 level="DEBUG")
+
+                message_content = message.content or ""
                 
                 # Create and add assistant message
                 assistant_message = Message(
@@ -104,7 +107,7 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                             "name": tc.function.name,
                             "arguments": tc.function.arguments
                         }
-                    ) for tc in raw_message.tool_calls] if raw_message.tool_calls else None,
+                    ) for tc in message.tool_calls] if message.tool_calls else None,
                     sender=agent.config.agent_name,
                     receiver=sender,
                     timestamp=datetime.now().isoformat(),
@@ -116,9 +119,9 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                             f"Added assistant message to conversation {conversation_id}")
                 
                 # Process tool calls if present
-                if raw_message.tool_calls:
+                if message.tool_calls:
                     log_event(agent.logger, "tool.processing", 
-                                f"Processing {len(raw_message.tool_calls)} tool calls")
+                                f"Processing {len(message.tool_calls)} tool calls")
                     
                     tool_calls = [ToolCall(
                         id=tc.id,
@@ -127,7 +130,7 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                             "name": tc.function.name,
                             "arguments": tc.function.arguments
                         }
-                    ) for tc in raw_message.tool_calls]
+                    ) for tc in message.tool_calls]
                     
                     # Execute each tool and add results
                     tool_iteration_count = 0
@@ -144,16 +147,14 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                                 sender=tool_call.function['name'],
                                 receiver=agent.config.agent_name
                             )
-                            print("\n<<----------------TOOL CALL MESSAGE---------------->>\n")
-                            print("ITERATION:", tool_iteration_count)
-                            print(
+
+                            log_event(agent.logger, "tool.result", 
                                 f"\nTOOL MESSAGE: {tool_message.content}"
                                 f"\nSENDER: {tool_message.sender}"
                                 f"\nRECEIVER: {tool_message.receiver}"
                                 f"\nTOOL CALL ID: {tool_message.tool_call_id}"
-                                f"\nTIMESTAMP: {tool_message.timestamp}"
-                            )
-                            print("\n<<----------------------------------------------->>\n")
+                                f"\nTIMESTAMP: {tool_message.timestamp}",
+                                level="DEBUG")
                             messages.append(tool_message)
                             log_event(agent.logger, "tool.result", 
                                         f"Added tool result for {tool_call.function['name']}")
@@ -178,11 +179,14 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                 # If we have a message without tool calls, evaluate to see if we should continue or stop
                 if message_content:
                     continue_or_stop = await agent._continue_or_stop(messages)
+                    log_event(agent.logger, "continue_or_stop.decision", 
+                            f"Continue or stop decision: {continue_or_stop}", level="DEBUG")
+                    
                     if continue_or_stop == "STOP":
                         final_response = message_content
                         log_event(agent.logger, "message.final", 
-                                    f"Final response generated for conversation {conversation_id}")
-                        break
+                                f"Final response generated for conversation {conversation_id}")
+                        break  # This ensures we exit the main loop
                     else:
                         # Wrap and append non-STOP message
                         messages.append(Message(
@@ -196,7 +200,8 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                             receiver=agent.config.agent_name
                         ))
                         log_event(agent.logger, "message.continue", 
-                                    f"Added intermediate response for conversation {conversation_id}")
+                                f"Added intermediate response for conversation {conversation_id}")
+                        continue  # Explicitly continue to next iteration
                 
             except asyncio.TimeoutError as e:
                 log_error(agent.logger, "OpenAI request timed out", exc_info=e)

@@ -36,7 +36,7 @@ async def process_feedback_impl(agent: Agent, days_threshold: int = 0) -> None:
             try:
                 # Extract insights using LLM
                 response = await agent.client.chat.completions.create(
-                    model=agent.config.model,
+                    model=agent.config.submodel,
                     messages=[
                         {"role": "system", "content": agent._xfer_feedback_prompt},
                         {"role": "user", "content": f"Feedback to analyze:\n{feedback['content']}"}

@@ -31,6 +31,7 @@ from .modules.receive_social_message_impl import receive_social_message_impl
 from .modules.eval_prompt_update_score import _evaluate_prompt_impl, _calculate_updated_confidence_score_impl
 from .modules.record_update_confidence_scores import _record_score_impl, _update_confidence_score_impl
 from .modules.learning_subroutine import learning_subroutine
+from .modules.start_sleeping_impl import _start_sleeping_impl
 
 #TODO: Memetic agent will have a series of modules that make up its system prompt. Some modules will be updated sub consciously via memory and others it will
 # have conscious control over.
@@ -232,6 +233,7 @@ class MemeticAgent(BaseAgent):
                 "system_prompt": self.system_path,
                 "reasoning_prompt": self._reasoning_module_path,
                 "give_feedback_prompt": self._give_feedback_module_path,
+                "reflect_feedback_prompt": self._reflect_feedback_module_path,
                 "thought_loop_prompt": self._thought_loop_module_path,
                 "xfer_long_term_prompt": self._xfer_long_term_module_path,
                 "self_improvement_prompt": self._self_improvement_module_path,
@@ -296,7 +298,7 @@ class MemeticAgent(BaseAgent):
                 system_message.content = new_content
             else:
                 self.conversations[self.current_conversation_id].insert(0, Message(
-                    role="system",
+                    role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system",
                     content=new_content
                 ))
 
@@ -337,7 +339,7 @@ class MemeticAgent(BaseAgent):
                 system_message.content = system_prompt
             else:
                 self.conversations[self.current_conversation_id].insert(0, Message(
-                    role="system",
+                    role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system",
                     content=system_prompt
                 ))
 
@@ -429,6 +431,16 @@ class MemeticAgent(BaseAgent):
                     self.logger.error(f"Failed to start socialising task: {str(e)}")
                     if self.status != AgentStatus.SHUTTING_DOWN:
                         await self.set_status(AgentStatus.AVAILABLE, "Failed to start socialising")
+                
+            if new_status == AgentStatus.SLEEPING:
+                try:
+                    # Create task for sleeping but don't await it
+                    asyncio.sleep(0.1)
+                    asyncio.create_task(self._start_sleeping())
+                except Exception as e:
+                    self.logger.error(f"Failed to start sleeping task: {str(e)}")
+                    if self.status != AgentStatus.SHUTTING_DOWN:
+                        await self.set_status(AgentStatus.AVAILABLE, "Failed to start sleeping")
         except Exception as e:
             self.logger.error(f"Status update failed: {str(e)}")
 
@@ -518,10 +530,10 @@ class MemeticAgent(BaseAgent):
                              level="DEBUG")
                     # Extract atomic memories using LLM
                     
-                    full_prompt = self._xfer_long_term_prompt + "\n\nFormat your response as an array of objects with the following schema:\n" + self._xfer_long_term_schema
+                    full_prompt = self._xfer_long_term_prompt + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + self._xfer_long_term_schema
 
                     atomic_response = await self.client.chat.completions.create(
-                        model=self.config.model,
+                        model=self.config.submodel,
                         messages=[
                             {"role": "system", "content": full_prompt},
                             {"role": "user", "content": f"Memory content:\n{combined_content}"}
@@ -567,7 +579,7 @@ class MemeticAgent(BaseAgent):
                             )
                             
                             retry_response = await self.client.chat.completions.create(
-                                model=self.config.model,
+                                model=self.config.submodel,
                                 messages=[
                                     {"role": "system", "content": retry_prompt},
                                     {"role": "user", "content": f"Previous response was invalid. Please reformat this content into the exact structure specified:\n{raw_response}"}
@@ -768,11 +780,11 @@ class MemeticAgent(BaseAgent):
                         feedback_content = "\n".join(item["content"] for item in feedback_items)
                         combined_content += f"\n\nFeedback:\n{feedback_content}"
 
-                    full_prompt = self._reflect_memories_prompt + "\n\nFormat your response as an array of objects with the following schema:\n" + self._reflect_memories_schema
+                    full_prompt = self._reflect_memories_prompt + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + self._reflect_memories_schema
 
                     # Extract learnings using LLM
                     reflection_response = await self.client.chat.completions.create(
-                        model=self.config.model,
+                        model=self.config.submodel,
                         messages=[
                             {"role": "system", "content": full_prompt},
                             {"role": "user", "content": f"Memory content:\n{combined_content}"}
@@ -846,8 +858,18 @@ class MemeticAgent(BaseAgent):
             required_fields = ["lesson", "importance", "category", "thoughts"]
             
             for reflection in reflections:
+                # Check if reflection is a dictionary and has all required fields
                 if isinstance(reflection, dict) and all(k in reflection for k in required_fields):
-                    validated_reflections.append(reflection)
+                    # Check if category is valid
+                    if reflection["category"] in [
+                        "tools", "agentic structure", "give feedback", "feedback reflection", "memory reflection", "long term memory transfer", 
+                        "thought loop", "reasoning", "self improvement", "system prompt", "evaluator"
+                    ]:
+                        validated_reflections.append(reflection)
+                    else:
+                        log_error(self.logger, f"Invalid reflection category: {reflection['category']}")
+                else:
+                    log_error(self.logger, f"Invalid reflection format: {reflection}")
             
             return validated_reflections
         except json.JSONDecodeError:
@@ -871,7 +893,7 @@ class MemeticAgent(BaseAgent):
         )
         
         retry_response = await self.client.chat.completions.create(
-            model=self.config.model,
+            model=self.config.submodel,
             messages=[
                 {"role": "system", "content": retry_prompt},
                 {"role": "user", "content": f"Previous response was invalid. Please reformat this content into the exact structure specified:\n{failed_response}"}
@@ -1059,6 +1081,10 @@ class MemeticAgent(BaseAgent):
     async def _calculate_updated_confidence_score(self, prompt_type: str, new_score: int) -> None:
         """Calculate the updated confidence score for the prompt."""
         return await _calculate_updated_confidence_score_impl(self, prompt_type, new_score)
+
+    async def _start_sleeping(self) -> None:
+        """Start the sleeping subroutine."""
+        return await _start_sleeping_impl(self)
         
 #TODO: The agent needs to eb able to call up things like its architecture or curent prompts 
 # so that it can use them when reflecting on memories.

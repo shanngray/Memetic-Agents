@@ -86,7 +86,7 @@ async def process_feedback_impl(agent: Agent, days_threshold: int = 0) -> None:
             try:
                 # Extract insights using LLM
                 response = await agent.client.chat.completions.create(
-                    model=agent.config.model,
+                    model=agent.config.submodel,
                     messages=[
                         {"role": "system", "content": agent._xfer_feedback_prompt},
                         {"role": "user", "content": f"Feedback to analyze:\n{feedback['content']}"}
@@ -164,7 +164,7 @@ async def reflect_on_feedback_impl(
         # Build conversation for reflection
         messages = [
             Message(
-                role="system",
+                role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system",
                 content=agent._reflect_feedback_prompt
             )
         ]
@@ -217,7 +217,8 @@ async def reflect_on_feedback_impl(
             model=agent.config.model,
             messages=[m.dict() for m in messages],
             temperature=0.7,
-            response_format={ "type": "json_object" }
+            response_format={ "type": "json_object" },
+            **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
         )
         
         reflection = json.loads(response.choices[0].message.content)

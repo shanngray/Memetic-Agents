@@ -227,7 +227,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         try:
             # Create prompt to evaluate conversation state
             system_prompt = Message(
-                role="system",
+                role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system",
                 content=self._thought_loop_prompt
             )
             
@@ -242,31 +242,29 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             raw_response = await self.client.chat.completions.create(
                 model=self.config.model,
                 messages=[msg.dict() for msg in messages],
-                temperature=0.7
+                **({"temperature": 0.7} if self.config.model not in ["o1-mini", "o3-mini"] else {}),
+                **({"reasoning_effort": self.config.reasoning_effort} if self.config.model == "o3-mini" else {})
             )
             
             response = raw_response.choices[0].message.content.strip()
 
-            print("\n|------------CONTINUE OR STOP------------|\n")
-            # Print out all messages and their non-empty fields
-            print("AGENT NAME:", self.config.agent_name)
-            print("\nMessages:")
+            log_event(self.logger, "conversation.evaluation", "Starting continue/stop evaluation", level="DEBUG")
+            log_event(self.logger, "conversation.agent", f"Agent: {self.config.agent_name}", level="DEBUG")
+            
+            # Log messages in a condensed format
             for msg in messages:
-                print("\nMessage:\n")
-                if msg.role:
-                    print(f"  role: {msg.role}\n")
-                if msg.content:
-                    print(f"  content: {msg.content}\n")
-                if msg.sender:
-                    print(f"  sender: {msg.sender}\n")
-                if msg.receiver:
-                    print(f"  receiver: {msg.receiver}\n")
-                if msg.name:
-                    print(f"  name: {msg.name}\n")
-                if msg.tool_calls:
-                    print(f"  tool_calls: {msg.tool_calls}\n")
-            ic(f"Response: {response}")
-            print("\n|--------------------------------|\n")            
+                msg_details = {k: v for k, v in {
+                    'role': msg.role,
+                    'content': msg.content,
+                    'sender': msg.sender,
+                    'receiver': msg.receiver,
+                    'name': msg.name,
+                    'tool_calls': msg.tool_calls
+                }.items() if v}  # Only include non-empty fields
+                
+                log_event(self.logger, "conversation.message", f"Message details: {msg_details}", level="DEBUG")
+            
+            log_event(self.logger, "conversation.response", f"LLM Response: {response}", level="DEBUG")       
             
             # Add human oversight
             print("\n|------------HUMAN OVERSIGHT------------|\n")
@@ -373,7 +371,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             for conv_id, group in conversation_groups.items():
                 try:
                     # Start with system prompt
-                    messages = [Message(role="system", content=self._system_prompt)]
+                    messages = [Message(role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system", content=self._system_prompt)]
                     
                     # Combine all content for this conversation
                     combined_content = "\n".join(group["content"])
@@ -649,7 +647,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                 try:
                     # Extract structured information using LLM
                     response = await self.client.chat.completions.create(
-                        model=self.config.model,
+                        model=self.config.submodel,
                         messages=[
                             {"role": "system", "content": self._xfer_long_term_prompt},
                             {"role": "user", "content": f"Memory to analyze:\n{memory['content']}"}

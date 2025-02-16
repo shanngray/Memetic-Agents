@@ -470,13 +470,14 @@ async def evaluate_prompt(agent: Agent, social_system_prompt: str, social_messag
         response = await asyncio.wait_for(
             agent.client.chat.completions.create(
                 model=agent.config.model,
-                temperature=agent.config.temperature,
+                **({"temperature": agent.config.temperature} if agent.config.model not in ["o1-mini", "o3-mini"] else {}),
                 messages=[
                     {"role": "system", "content": social_system_prompt},
                     {"role": "user", "content": social_message}
                 ],
                 timeout=3000,
-                response_format={ "type": "json_object" }
+                response_format={ "type": "json_object" },
+                **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
             ),
             timeout=3050
         )
@@ -512,13 +513,14 @@ async def update_prompt(agent: Agent, social_system_prompt: str, social_message:
         response = await asyncio.wait_for(
             agent.client.chat.completions.create(
                 model=agent.config.model,
-                temperature=agent.config.temperature,
+                **({"temperature": agent.config.temperature} if agent.config.model not in ["o1-mini", "o3-mini"] else {}),
                 messages=[
                     {"role": "system", "content": social_system_prompt},
                     {"role": "user", "content": social_message}
                 ],
                 timeout=3000,
-                response_format={ "type": "json_object" }
+                response_format={ "type": "json_object" },
+                **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
             ),
             timeout=3050
         )

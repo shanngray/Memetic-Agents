@@ -1,0 +1,18 @@
+{
+  "output_format": {
+    "type": "object",
+    "required": ["score", "feedback"],
+    "properties": {
+      "score": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10,
+        "description": "Quality score for the response"
+      },
+      "feedback": {
+        "type": "string",
+        "description": "Constructive feedback explaining the score and suggesting improvements"
+      }
+    }
+  }
+}

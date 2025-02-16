@@ -1,0 +1,38 @@
+{
+  "output_format": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "required": ["statement", "confidence", "category", "metatags", "thoughts"],
+      "properties": {
+        "statement": {
+          "type": "string",
+          "description": "The complete factual statement"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Certainty level of the memory"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["fact", "preference", "capability", "relationship", "belief", "goal"],
+          "description": "Classification of the memory type"
+        },
+        "metatags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^#[a-zA-Z0-9_-]+$"
+          },
+          "description": "Semantic tags for memory linking"
+        },
+        "thoughts": {
+          "type": "string",
+          "description": "Analysis of the memory's usefulness"
+        }
+      }
+    }
+  }
+}

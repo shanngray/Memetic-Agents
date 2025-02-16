@@ -48,7 +48,8 @@ async def evaluate_response_impl(agent: Agent, response_content: str) -> tuple[i
                 {"role": "system", "content": full_prompt},
                 {"role": "user", "content": f"Response to evaluate:\n{response_content}"}
             ],
-            response_format={ "type": "json_object" }
+            response_format={ "type": "json_object" },
+            **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
         )
         
         print("\n|------------EVALUATE RESPONSE------------|\n")

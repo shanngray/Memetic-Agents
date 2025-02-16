@@ -67,13 +67,34 @@ async def _record_score_impl(agent: Agent, prompt_type: str, prompt_score: int, 
             "self_eval"
         }
         
-        if required_scores.issubset(scores_data[conversation_id]["prompts"][prompt_type].keys()):
-            await agent._update_confidence_score(
-                prompt_type,
-                scores_data[conversation_id]["prompts"][prompt_type]["friends_initial_eval"],
-                scores_data[conversation_id]["prompts"][prompt_type]["friends_updated_eval"],
-                scores_data[conversation_id]["prompts"][prompt_type]["self_eval"]
-            )
+        prompt_scores = scores_data[conversation_id]["prompts"].get(prompt_type, {})
+        if not required_scores.issubset(prompt_scores.keys()):
+            return
+
+        # Get all required scores
+        try:
+            scores = {
+                "current": agent._prompt_confidence_scores.get(prompt_type, 1.0),
+                "friends_initial": prompt_scores["friends_initial_eval"],
+                "friends_updated": prompt_scores["friends_updated_eval"],
+                "self_eval": prompt_scores["self_eval"]
+            }
+            
+            # Validate all scores are numbers
+            if not all(isinstance(score, (int, float)) for score in scores.values()):
+                return
+                
+            # Update confidence if improvement threshold met
+            if (scores["friends_updated"] + scores["self_eval"]) > (scores["friends_initial"] + scores["current"]):
+                await agent._update_confidence_score(
+                    prompt_type,
+                    scores["friends_initial"],
+                    scores["friends_updated"],
+                    scores["self_eval"]
+                )
+        except KeyError:
+            # Handle missing scores gracefully
+            return
         
         log_event(agent.logger, "confidence.recorded",
                     f"Recorded {score_type} score of {prompt_score} for {prompt_type}")
@@ -102,21 +123,31 @@ async def _update_confidence_score_impl(agent: Agent, prompt_type: str, initial_
             if not isinstance(score, int) or score < 0 or score > 10:
                 raise ValueError("All input scores must be integers between 0 and 10")
         
-        # Get current confidence score (defaults to 5.0)
-        current_confidence = agent._prompt_confidence_scores.get(prompt_type, 5.0)
+        weighting = 2 # Higher is more difficult to change
         
-        # Calculate improvement factor (-1 to 1)
-        score_improvement = (updated_friend_score - initial_friend_score) / 10
+        # Get current confidence score (defaults to 1.0)
+        current_confidence = agent._prompt_confidence_scores.get(prompt_type, 1.0)
         
-        # Calculate alignment factor (-1 to 1) based on how close self eval was to friend's eval
-        alignment_factor = 1 - (abs(self_eval_score - initial_friend_score) / 10)
+        # Calculate friend's score improvement factor (-1 to 1)
+        friend_score_improvement = (updated_friend_score - initial_friend_score) / 10
         
-        # Weighted adjustment calculation
-        # More weight on improvement (0.6) than alignment (0.4)
-        adjustment = ((score_improvement * 0.6) + (alignment_factor * 0.4)) * 2
+        # Calculate self-eval score improvement factor (-1 to 1)
+        self_score_improvement = (self_eval_score - current_confidence) / 10
+
+        # Calculate combined score improvement factor (-1 to 1)
+        combined_score_improvement = (friend_score_improvement + self_score_improvement) / 2
         
+        # Calculate Weighting Factor (0 to 1)
+        weighting_factor = (10 - current_confidence) / weighting
+
+        # Weighted improvement calculation (-1 to 1)
+        if combined_score_improvement > 0:
+            weighted_improvement = combined_score_improvement * weighting_factor
+        else:
+            weighted_improvement = combined_score_improvement * (1 - weighting_factor)
+       
         # Calculate new confidence score (bounded between 0 and 10)
-        new_confidence = max(0.0, min(10.0, current_confidence + adjustment))
+        new_confidence = max(0.0, min(10.0, current_confidence + weighted_improvement))
         
         # Update confidence scores
         agent._prompt_confidence_scores[prompt_type] = new_confidence

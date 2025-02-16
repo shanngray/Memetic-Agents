@@ -154,7 +154,7 @@ class FrankenAgent(BaseAgent):
                 else:
                     self.logger.debug("Creating new system message")
                     self.conversations[self.current_conversation_id].insert(0, Message(
-                        role="system",
+                        role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system",
                         content=new_content
                     ))
                 
@@ -233,7 +233,7 @@ class FrankenAgent(BaseAgent):
                 system_message.content = system_prompt
             else:
                 self.conversations[self.current_conversation_id].insert(0, Message(
-                    role="system",
+                    role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system",
                     content=system_prompt
                 ))
         
