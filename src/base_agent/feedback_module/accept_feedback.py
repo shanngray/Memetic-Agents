@@ -88,7 +88,7 @@ async def process_feedback_impl(agent: Agent, days_threshold: int = 0) -> None:
                 response = await agent.client.chat.completions.create(
                     model=agent.config.submodel,
                     messages=[
-                        {"role": "system", "content": agent._xfer_feedback_prompt},
+                        {"role": "system", "content": agent.prompt.xfer_feedback.content},
                         {"role": "user", "content": f"Feedback to analyze:\n{feedback['content']}"}
                     ],
                     response_format={ "type": "json_object" }
@@ -165,7 +165,7 @@ async def reflect_on_feedback_impl(
         messages = [
             Message(
                 role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system",
-                content=agent._reflect_feedback_prompt
+                content=agent.prompt.reflect_feedback.content
             )
         ]
         

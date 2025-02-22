@@ -11,18 +11,6 @@ import uuid
 
 async def start_socialising_impl(agent: Agent) -> Dict[str, Any]:
     """Start socialising with another agent."""
-
-    # 1) Lookup all agents in the directory service that are in 'socialising' status
-    # 2) Select a random agent from the list
-    # 3) Send a message to the selected agent
-    # 4) Wait for a response from the selected agent
-
-    # Unclear what happens after the agent receives the message back, This function was copied from a tool where the response
-    # was fed back into the LLM... currently this function has no way of being called and does nothing once it receives a response.
-
-    # 5) If the response is a 'social message' then process it
-    # 6) If the response is not a 'social message' then send a rote response
-
     socialising_agent = agent.config.agent_name
 
     async with httpx.AsyncClient(timeout=3000.0) as client:
@@ -58,7 +46,7 @@ async def start_socialising_impl(agent: Agent) -> Dict[str, Any]:
     prompt_mapping = agent.get_prompt_mapping()
     
     # Get the prompt with the lowest confidence score
-    low_conf_prompt_type = min(agent._prompt_confidence_scores.items(), key=lambda x: x[1])[0] + "_prompt"
+    low_conf_prompt_type = min(agent.prompt.confidence_scores.items(), key=lambda x: x[1])[0] + "_prompt"
 
     print("######################### low_conf_prompt_type: ", low_conf_prompt_type)
     # Get the prompt content

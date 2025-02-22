@@ -98,7 +98,8 @@ EVENT_EMOJIS = {
     "agent.tool_called": "🤖🔧",
     "agent.error": "🤖❌",
     # agent status events
-    "agent.available": "🤖💤",
+    "agent.available": "🤖",
+    "agent.sleeping": "🤖💤",
     "agent.learning": "🤖📚",
     "agent.shutting_down": "🤖🛑",
     "agent.memorising": "🤖💾",
@@ -122,7 +123,7 @@ EVENT_EMOJIS = {
     # Message events
     "message.content": "💬",
     "message.iteration": "💬🔄",
-    "message.details.raw": "💬[]",
+    "message.details.raw": "💬",
     "message.details": "💬🔍",
     "message.details.error": "💬🔍❌",
     # Memory events

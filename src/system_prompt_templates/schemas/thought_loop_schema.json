@@ -1,0 +1,3 @@
+{
+    "instructions": "If complete, respond with exactly 'STOP'. Otherwise, respond with clear instructions on what steps to take next, starting with 'We still need to...' and ending with '...Please continue.'"
+}

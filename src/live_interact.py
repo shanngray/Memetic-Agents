@@ -23,6 +23,7 @@ logger = setup_logger(
     console_logging=True
 )
 
+#TODO: The conversation store never prunes. old conversations need to be deleted. 
 # Initialize conversation store
 CONVERSATION_STORE = ConversationStore(Path("agent_files/conversations.json"))
 
@@ -120,8 +121,8 @@ async def handle_status_update(agent_name: str, new_status: str, conversation_id
             response.raise_for_status()
             result = response.json()
             log_event(logger, "status.update.success", 
-                     f"Status updated for {agent_name}: {result['previous_status']} → {result['current_status']}", level="DEBUG")
-            print(f"\nStatus updated: {result['previous_status']} → {result['current_status']}")
+                     f"Status updated for {agent_name}: /{result['previous_status']} → /{result['current_status']}", level="DEBUG")
+            print(f"\nStatus updated: /{result['previous_status']} → /{result['current_status']}")
     except KeyError:
         valid_statuses = [s.name.lower() for s in AgentStatus]
         error_msg = f"Invalid status '{new_status}'. Must be one of: {', '.join(valid_statuses)}"

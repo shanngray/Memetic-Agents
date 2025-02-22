@@ -54,7 +54,7 @@ async def receive_social_message_impl(agent:Agent, message: SocialMessage) -> st
         agent.conversations[conversation_id] = [
             Message(
                 role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system", 
-                content=agent._system_prompt
+                content=agent.prompt.system.content
                 )
         ]
         pass

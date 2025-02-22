@@ -23,7 +23,7 @@ async def _evaluate_prompt_impl(agent: Agent, prompt_type: str, updated_prompt: 
     existing_prompt = prompt_mapping[prompt_type]
 
     combined_evaluator_prompt = (
-        f"{agent._evaluator_prompt}\n\nType of prompt being evaluated: {prompt_type}"
+        f"{agent.prompt.evaluator.content}\n\nType of prompt being evaluated: {prompt_type}"
         f"\n\nOld version of prompt: {existing_prompt}"
         "\n\nFormat the output as a JSON object with the following schema:\n"
         "{\n"
@@ -89,7 +89,7 @@ async def _calculate_updated_confidence_score_impl(agent: Agent, prompt_type: st
 
     max_score = 10
     weighting = 2 # Higher is more difficult to change
-    existing_score = agent._prompt_confidence_scores[prompt_type]
+    existing_score = getattr(agent.prompt, prompt_type).confidence
 
     # Input validation
     if not (0 <= existing_score <= max_score and 
@@ -111,4 +111,5 @@ async def _calculate_updated_confidence_score_impl(agent: Agent, prompt_type: st
                 f"Updated {prompt_type} confidence score: {updated_score}")
 
     # Update the confidence score
-    agent._prompt_confidence_scores[prompt_type] = updated_score
+    prompt_entry = getattr(agent.prompt, prompt_type)
+    prompt_entry.confidence = updated_score

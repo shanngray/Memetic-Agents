@@ -26,7 +26,7 @@ default_scores = {
     "self_improvement": 0.0
 }
 
-def create_agent_folder_structure(agent_name: str) -> Path:
+def create_agent_folder_structure(agent_name: str, prompt_templates: str) -> Path:
     """Create the required folder structure for a new agent."""
     base_path = Path("agent_files") / agent_name
     prompt_modules_path = base_path / "prompt_modules"
@@ -41,6 +41,15 @@ def create_agent_folder_structure(agent_name: str) -> Path:
     
     # Copy base prompt templates
     base_prompts_path = Path("src/system_prompt_templates")
+    if prompt_templates == "placeholder":
+        base_prompts_path = Path("src/system_prompt_placeholders")
+        base_schemas_path = Path("src/system_prompt_placeholders/schemas")
+    elif prompt_templates == "standard":
+        base_prompts_path = Path("src/system_prompt_templates")
+        base_schemas_path = Path("src/system_prompt_templates/schemas")
+    else:
+        raise ValueError(f"Invalid prompt template: {prompt_templates}")
+    
     print(f"Source prompts path: {base_prompts_path} (exists: {base_prompts_path.exists()})")
     print(f"Destination path: {prompt_modules_path} (exists: {prompt_modules_path.exists()})")
     
@@ -50,7 +59,7 @@ def create_agent_folder_structure(agent_name: str) -> Path:
         shutil.copy2(prompt_file, dest_file)
         print(f"Destination file exists: {dest_file.exists()}")
 
-    base_schemas_path = Path("src/system_prompt_templates/schemas")
+    
     for schema_file in base_schemas_path.glob("*.json"):
         shutil.copy2(schema_file, schemas_path / schema_file.name)
     
@@ -67,6 +76,10 @@ def get_agent_config_from_user() -> Dict:
         inquirer.Text('description', message="Provide a brief description of your agent"),
         inquirer.Text('model', message="Which model should the agent use?", default="gpt-4o"),
         inquirer.Text('submodel', message="Which submodel should the agent use?", default="gpt-4o-mini"),
+        inquirer.List('prompt_templates',
+                      message="Which prompt templates should the agent use?",
+                      choices=['placeholder', 'standard'],
+                      default='placeholder'),
         inquirer.List('console_logging', 
                      message="Enable console logging?",
                      choices=['True', 'False'],
@@ -80,7 +93,7 @@ def get_agent_config_from_user() -> Dict:
                      default="1.0"),
         inquirer.Checkbox('enabled_tools',
                          message="Select enabled tools (Space to select/unselect, Enter to confirm)",
-                         choices=['agent_search', 'list_agents', 'web_search'],
+                         choices=['agent_search', 'list_agents', 'web_search', 'new_blog', 'edit_blog', 'read_blog'],
                          default=['agent_search', 'list_agents'])
     ]
     
@@ -93,7 +106,7 @@ def create_new_agent() -> None:
     config_data = get_agent_config_from_user()
     
     # Create folder structure
-    agent_path = create_agent_folder_structure(config_data['agent_name'])
+    agent_path = create_agent_folder_structure(config_data['agent_name'], config_data['prompt_templates'])
     
     # Generate the agent creation script
     script_content = f'''import os

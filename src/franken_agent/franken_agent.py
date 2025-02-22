@@ -62,7 +62,7 @@ class FrankenAgent(BaseAgent):
         self._initialize_system_prompt()
 
     async def initialize(self) -> None:
-        """Implemented in MemeticAgent only. Run from server.py"""
+        """Implemented in MemeticAgent only. Run from main.py"""
         pass
 
     @lru_cache(maxsize=3)
@@ -146,7 +146,7 @@ class FrankenAgent(BaseAgent):
                     None
                 )
                 
-                new_content = f"{self._system_prompt}\n\nCurrent active technique:\n{technique_content}"
+                new_content = f"{self.prompt.system.content}\n\nCurrent active technique:\n{technique_content}"
                 
                 if system_message:
                     self.logger.debug("Updating existing system message")
@@ -213,12 +213,14 @@ class FrankenAgent(BaseAgent):
         
         # Build complete system prompt
         system_prompt = (
-            f"{self._system_prompt}\n\n"
+            f"{self.prompt.system.content}\n\n"
             f"Available tools:\n{tools_desc}\n\n"
             f"Available reasoning techniques (can be applied with the apply_technique tool):\n{techniques_desc}\n\n"
             f"Current active technique:\n{technique_content}"
         )
-        self._system_prompt = system_prompt
+        
+        # self._system_prompt = system_prompt
+        self.prompt.system.content = system_prompt
         
         self.logger.info(f"System prompt:\n\n {system_prompt}\n\n")
 

@@ -32,10 +32,9 @@ from .modules.eval_prompt_update_score import _evaluate_prompt_impl, _calculate_
 from .modules.record_update_confidence_scores import _record_score_impl, _update_confidence_score_impl
 from .modules.learning_subroutine import learning_subroutine
 from .modules.start_sleeping_impl import _start_sleeping_impl
-
-#TODO: Memetic agent will have a series of modules that make up its system prompt. Some modules will be updated sub consciously via memory and others it will
-# have conscious control over.
-#It will also be able to create new modules.
+from .modules.continue_or_stop_impl import continue_or_stop_impl
+from .modules.extract_learnings_impl import extract_learnings_impl
+from .modules.transfer_to_long_term_impl import transfer_to_long_term_impl
 
 class MemeticAgent(BaseAgent):
     def __init__(self, api_key: str, chroma_client: PersistentClient, config: AgentConfig = None):
@@ -50,27 +49,32 @@ class MemeticAgent(BaseAgent):
         self.scores_path = self.prompt_path / "scores"
         self.scores_path.mkdir(parents=True, exist_ok=True)
 
-        # Set up paths for all prompt modules
-        self._reasoning_module_path = self.prompt_path / "reasoning_prompt.md"
-        self._give_feedback_module_path = self.prompt_path / "give_feedback_prompt.md"
-        self._thought_loop_module_path = self.prompt_path / "thought_loop_prompt.md"
-        self._xfer_long_term_module_path = self.prompt_path / "xfer_long_term_prompt.md"
-        self._self_improvement_module_path = self.prompt_path / "self_improvement_prompt.md"
-        self._reflect_memories_module_path = self.prompt_path / "reflect_memories_prompt.md"
-        self._evaluator_module_path = self.prompt_path / "evaluator_prompt.md"
-
         # Set up paths for schemas
-        self._xfer_long_term_schema_path = self.prompt_path / "schemas/xfer_long_term_schema.json"
-        self._reflect_memories_schema_path = self.prompt_path / "schemas/reflect_memories_schema.json"
-        self._self_improvement_schema_path = self.prompt_path / "schemas/self_improvement_schema.json"
-        self._give_feedback_schema_path = self.prompt_path / "schemas/give_feedback_schema.json"
+        schema_path = self.prompt_path / "schemas"
+        schema_path.mkdir(parents=True, exist_ok=True)
+        
+        # Update paths in PromptLibrary entries
+        self.prompt.system.path = self.prompt_path / "sys_prompt.md"
+        self.prompt.reasoning.path = self.prompt_path / "reasoning_prompt.md"
+        self.prompt.give_feedback.path = self.prompt_path / "give_feedback_prompt.md"
+        self.prompt.thought_loop.path = self.prompt_path / "thought_loop_prompt.md"
+        self.prompt.xfer_long_term.path = self.prompt_path / "xfer_long_term_prompt.md"
+        self.prompt.self_improvement.path = self.prompt_path / "self_improvement_prompt.md"
+        self.prompt.reflect_memories.path = self.prompt_path / "reflect_memories_prompt.md"
+        self.prompt.evaluator.path = self.prompt_path / "evaluator_prompt.md"
+        
+        # Update schema paths
+        self.prompt.xfer_long_term.schema_path = schema_path / "xfer_long_term_schema.json"
+        self.prompt.reflect_memories.schema_path = schema_path / "reflect_memories_schema.json"
+        self.prompt.self_improvement.schema_path = schema_path / "self_improvement_schema.json"
+        self.prompt.give_feedback.schema_path = schema_path / "give_feedback_schema.json"
+        self.prompt.thought_loop.schema_path = schema_path / "thought_loop_schema.json"
 
         # Update path to confidence scores
         self._prompt_confidence_scores_path = self.scores_path / "prompt_confidence_scores.json"
 
         #TODO System prompt is currently loaded via config ... this should be made consistent with the sub modules
-        # Path to system prompt
-        self.system_path = self.prompt_path / "sys_prompt.md"
+
 
         # Add reasoning-related tool to internal_tools dictionary
         self.internal_tools.update({
@@ -85,30 +89,38 @@ class MemeticAgent(BaseAgent):
         }.items():
             self.tool_mod.register(tool_func)
 
-        # Update system prompt with reasoning module
-        self._initialize_system_prompts()
-
-
     async def initialize(self) -> None:
-        """Async initialization to load all required files. Run from server.py"""
+        """Async initialization to load all required files. Run from main.py"""
         try:
-            # Load all modules
-            self._reasoning_prompt = await self._load_module(self._reasoning_module_path)
-            self._give_feedback_prompt = await self._load_module(self._give_feedback_module_path)
-            self._thought_loop_prompt = await self._load_module(self._thought_loop_module_path)
-            self._xfer_long_term_prompt = await self._load_module(self._xfer_long_term_module_path)
-            self._self_improvement_prompt = await self._load_module(self._self_improvement_module_path)
-            self._reflect_memories_prompt = await self._load_module(self._reflect_memories_module_path)
-            self._evaluator_prompt = await self._load_module(self._evaluator_module_path)
+            # Load all prompt contents
+            self.prompt.reasoning.content = await self._load_module(self.prompt.reasoning.path)
+            self.prompt.give_feedback.content = await self._load_module(self.prompt.give_feedback.path)
+            self.prompt.thought_loop.content = await self._load_module(self.prompt.thought_loop.path)
+            self.prompt.xfer_long_term.content = await self._load_module(self.prompt.xfer_long_term.path)
+            self.prompt.self_improvement.content = await self._load_module(self.prompt.self_improvement.path)
+            self.prompt.reflect_memories.content = await self._load_module(self.prompt.reflect_memories.path)
+            self.prompt.evaluator.content = await self._load_module(self.prompt.evaluator.path)
 
             # Load schemas
-            self._xfer_long_term_schema = await self._load_module(self._xfer_long_term_schema_path)
-            self._reflect_memories_schema = await self._load_module(self._reflect_memories_schema_path)
-            self._self_improvement_schema = await self._load_module(self._self_improvement_schema_path)
-            self._give_feedback_schema = await self._load_module(self._give_feedback_schema_path)
+            self.prompt.xfer_long_term.schema = await self._load_module(self.prompt.xfer_long_term.schema_path)
+            self.prompt.reflect_memories.schema = await self._load_module(self.prompt.reflect_memories.schema_path)
+            self.prompt.self_improvement.schema = await self._load_module(self.prompt.self_improvement.schema_path)
+            self.prompt.give_feedback.schema = await self._load_module(self.prompt.give_feedback.schema_path)
+            self.prompt.thought_loop.schema = await self._load_module(self.prompt.thought_loop.schema_path)
+
+            #TODO: This could be cleaned up and made more efficient
+            # Load confidence scores and update PromptEntries
+            scores = await self._load_confidence_scores(self._prompt_confidence_scores_path)
+            self.prompt.reasoning.confidence = scores.get("reasoning", 0.0)
+            self.prompt.give_feedback.confidence = scores.get("give_feedback", 0.0)
+            self.prompt.thought_loop.confidence = scores.get("thought_loop", 0.0)
+            self.prompt.xfer_long_term.confidence = scores.get("xfer_long_term", 0.0)
+            self.prompt.self_improvement.confidence = scores.get("self_improvement", 0.0)
+            self.prompt.reflect_memories.confidence = scores.get("reflect_memories", 0.0)
+            self.prompt.evaluator.confidence = scores.get("evaluator", 0.0)
             
-            # Load confidence scores
-            self._prompt_confidence_scores = await self._load_confidence_scores(self._prompt_confidence_scores_path)
+            # Initialize system prompts after all content is loaded
+            self._initialize_system_prompts()
             
             self.logger.info("Agent initialization completed successfully")
         except Exception as e:
@@ -144,7 +156,11 @@ class MemeticAgent(BaseAgent):
         return "\n".join(tool_descriptions)
 
     async def _load_module(self, module_path: Path) -> str:
-        """Load module content."""
+        """Load module content.
+        
+        Raises:
+            FileNotFoundError: If module file doesn't exist
+        """
         try:
             # Create synchronous context manager for FileLock
             lock = FileLock(f"{module_path}.lock")
@@ -152,10 +168,11 @@ class MemeticAgent(BaseAgent):
                 content = await asyncio.to_thread(module_path.read_text, encoding="utf-8")
                 return content.strip()
         except FileNotFoundError:
-            default_contents = "Module not found. Tell your maker to update: " + str(module_path)
-            with FileLock(f"{module_path}.lock"):
-                await asyncio.to_thread(module_path.write_text, default_contents, encoding="utf-8")
-            return default_contents
+            log_error(self.logger, f"Required module not found: {module_path}")
+            raise FileNotFoundError(
+                f"Required module not found: {module_path}. "
+                "Please ensure all required modules are created before starting the agent."
+            )
 
     async def _load_confidence_scores(self, confidence_scores_path: Path) -> Dict[str, float]:
         """Load confidence scores from file.
@@ -228,17 +245,18 @@ class MemeticAgent(BaseAgent):
             if prompt_type not in prompt_mapping:
                 raise ValueError(f"Invalid prompt type: {prompt_type}. Valid types are: {', '.join(prompt_mapping.keys())}")
             
+            #TODO: This could be cleaned up and made more efficient - shouldn't need to list them all
             # Map prompt_type to corresponding path and variable
             path_map = {
-                "system_prompt": self.system_path,
-                "reasoning_prompt": self._reasoning_module_path,
-                "give_feedback_prompt": self._give_feedback_module_path,
-                "reflect_feedback_prompt": self._reflect_feedback_module_path,
-                "thought_loop_prompt": self._thought_loop_module_path,
-                "xfer_long_term_prompt": self._xfer_long_term_module_path,
-                "self_improvement_prompt": self._self_improvement_module_path,
-                "reflect_memories_prompt": self._reflect_memories_module_path,
-                "evaluator_prompt": self._evaluator_module_path
+                "system_prompt": self.prompt.system.path,
+                "reasoning_prompt": self.prompt.reasoning.path,
+                "give_feedback_prompt": self.prompt.give_feedback.path,
+                "reflect_feedback_prompt": self.prompt.reflect_feedback.path,
+                "thought_loop_prompt": self.prompt.thought_loop.path,
+                "xfer_long_term_prompt": self.prompt.xfer_long_term.path,
+                "self_improvement_prompt": self.prompt.self_improvement.path,
+                "reflect_memories_prompt": self.prompt.reflect_memories.path,
+                "evaluator_prompt": self.prompt.evaluator.path
             }
             
             if prompt_type not in path_map:
@@ -292,7 +310,7 @@ class MemeticAgent(BaseAgent):
                 None
             )
             
-            new_content = f"{self._system_prompt}\n\nReasoning Module:\n{self._reasoning_prompt}"
+            new_content = f"{self.prompt.system.content}\n\nReasoning Module:\n{self.prompt.reasoning.content}"
             
             if system_message:
                 system_message.content = new_content
@@ -307,24 +325,31 @@ class MemeticAgent(BaseAgent):
         # Get tool descriptions
         tools_desc = self._get_tool_descriptions()
         
+        # Log content status
+        self.logger.debug(f"Reasoning content: {self.prompt.reasoning.content is not None}")
+        self.logger.debug(f"Evaluator content: {self.prompt.evaluator.content is not None}")
+        
+        # Create an identity prompt before overwriting the system prompt
+        # TODO: This is a hack to get the identity prompt to work - might want to pull this into PromptLibrary
+        identity_prompt = self.prompt.system.content
+
         # Build complete system prompt
         system_prompt = (
-            f"{self._system_prompt}\n\n"
+            f"{self.prompt.system.content}\n\n"
             f"Available tools:\n{tools_desc}\n\n"
-            f"Reasoning Module:\n{self._reasoning_prompt}"
+            f"Reasoning Module:\n{self.prompt.reasoning.content or 'Not loaded'}"
         )
-        self._system_prompt = system_prompt
+        self.prompt.system.content = system_prompt
 
         # Build complete evaluator prompt
         evaluator_prompt = (
             f"You are the self-reflecting observer of: {self.config.agent_name}\n\n"
-            f"Your identity is: {self._system_prompt}\n\n"
-            # f"Available tools:\n{tools_desc}\n\n"
-            f"Observer Instructions:\n{self._evaluator_prompt}"
+                f"Your identity is: {identity_prompt}\n\n"
+                f"Observer Instructions:\n{self.prompt.evaluator.content or 'Not loaded'}"
         )
-        self._evaluator_prompt = evaluator_prompt
+        self.prompt.evaluator.content = evaluator_prompt
 
-        # self.logger.debug(f"System prompt:\n\n {system_prompt}\n\n")
+        self.logger.debug(f"System prompt:\n\n {system_prompt}\n\n")
         self.logger.debug(f"Observer prompt:\n\n {evaluator_prompt}\n\n")
         
 
@@ -346,9 +371,9 @@ class MemeticAgent(BaseAgent):
     async def update_system_prompt(self, new_prompt: str) -> str:
         """Update your system prompt when you want to modify your core behavior.
         Use this tool to permanently change how you operate."""
-        lock = FileLock(f"{self.system_path}.lock")
+        lock = FileLock(f"{self.prompt.system.path}.lock")
         with lock:
-            await asyncio.to_thread(self.system_path.write_text, new_prompt, encoding="utf-8")
+            await asyncio.to_thread(self.prompt.system.path.write_text, new_prompt, encoding="utf-8")
         return "System prompt updated successfully"
 
     async def set_status(self, new_status: AgentStatus, trigger: str) -> None:
@@ -356,7 +381,7 @@ class MemeticAgent(BaseAgent):
         try:
             if new_status == self.status:
                 log_event(self.logger, "status.change", 
-                         f"Status unchanged - Current: {self.status.name}, "
+                         f"Status unchanged - Current: /{self.status.name}, "
                          f"New: {new_status.name}, Trigger: {trigger}")
                 return
 
@@ -364,10 +389,10 @@ class MemeticAgent(BaseAgent):
             
             if new_status not in valid_transitions:
                 log_event(self.logger, "status.change", 
-                         f"Invalid status transition - Current: {self.status.name}, "
+                         f"Invalid status transition - Current: /{self.status.name}, "
                          f"New: {new_status.name}, Trigger: {trigger}", level="ERROR")
                 raise ValueError(
-                    f"Invalid status transition from {self.status.name} to {new_status.name} caused by {trigger}"
+                    f"Invalid status transition from /{self.status.name} to /{new_status.name} caused by {trigger}"
                 )
 
             # Store previous status before updating
@@ -385,7 +410,7 @@ class MemeticAgent(BaseAgent):
             log_event(
                 self.logger,
                 f"agent.{self.status.name}",
-                f"Status changed: {previous_status.name} -> {self.status.name} ({trigger})"
+                f"Status changed: /{previous_status.name} -> /{self.status.name} ({trigger})"
             )
             
             # Handle MEMORISING state tasks
@@ -415,8 +440,8 @@ class MemeticAgent(BaseAgent):
             if new_status == AgentStatus.LEARNING:
                 try:
                     await self._run_learning_subroutine()
-                    #learning_task = asyncio.create_task(self._run_learning_subroutine())
-                    #await learning_task
+                    if self.status != AgentStatus.SHUTTING_DOWN:
+                        await self.set_status(AgentStatus.AVAILABLE, "Learning complete")
                 except Exception as e:
                     self.logger.error(f"Learning failed: {str(e)}")
                     if self.status != AgentStatus.SHUTTING_DOWN:
@@ -436,7 +461,9 @@ class MemeticAgent(BaseAgent):
                 try:
                     # Create task for sleeping but don't await it
                     asyncio.sleep(0.1)
-                    asyncio.create_task(self._start_sleeping())
+                    await self._start_sleeping()
+                    if self.status != AgentStatus.SHUTTING_DOWN:
+                        await self.set_status(AgentStatus.AVAILABLE, "Sleeping complete")
                 except Exception as e:
                     self.logger.error(f"Failed to start sleeping task: {str(e)}")
                     if self.status != AgentStatus.SHUTTING_DOWN:
@@ -458,205 +485,7 @@ class MemeticAgent(BaseAgent):
                            Memories older than this will be processed into long-term storage.
                            Default is 0 (process all memories).
         """
-        try:
-            if self.status != AgentStatus.MEMORISING:
-                # await self.set_status(AgentStatus.MEMORISING, "Long-Term Memory transfer triggered")
-                log_error(self.logger, "Agent must be in MEMORISING state to transfer to long-term")
-                return
-
-            log_event(self.logger, "agent.memorising", "Beginning atomic memory extraction process", level="DEBUG")
-            
-            # Retrieve recent memories from short-term storage
-            short_term_memories = await self.memory.retrieve(
-                query="",  # Empty query to get all memories
-                collection_names=["short_term"],
-                n_results=100
-            )
-            
-            # Add debug logging
-            for memory in short_term_memories:
-                log_event(self.logger, "memory.debug", 
-                         f"Memory structure: {memory}", level="DEBUG")
-
-            # Filter memories based on threshold
-            threshold_date = datetime.now() - timedelta(days=days_threshold)
-            short_term_memories = [
-                memory for memory in short_term_memories
-                if datetime.fromisoformat(memory["metadata"].get("timestamp", "")) < threshold_date
-            ]
-            
-            if not short_term_memories:
-                log_error(self.logger, "memory.error", "No recent memories found for atomization")
-                # await self.set_status(self._previous_status, "No recent memories found for atomization")
-                return
-
-            # Group memories by conversation ID
-            conversation_memories = {}
-            for memory in short_term_memories:
-                conv_id = memory["metadata"].get("conversation_id")
-                if conv_id not in conversation_memories:
-                    conversation_memories[conv_id] = []
-                conversation_memories[conv_id].append(memory)
-
-            # Sort memories within each conversation by timestamp
-            for conv_id in conversation_memories:
-                conversation_memories[conv_id].sort(
-                    key=lambda x: datetime.fromisoformat(x["metadata"].get("timestamp", ""))
-                )
-
-            # Process each conversation group
-            for conv_id, memories in conversation_memories.items():
-                try:
-                    # Combine memory content in chronological order
-                    combined_content = "\n".join(memory["content"] for memory in memories)
-                    
-                    # Store original metadata from first memory in conversation
-                    original_metadata = memories[0]["metadata"] if memories else {}
-                    
-                    feedback_items = await self.memory.retrieve(
-                        query="",
-                        collection_names=["feedback"],
-                        n_results=100,
-                        metadata_filter={"conversation_id": conv_id}
-                    )
-
-                    # Add feedback content if any exists
-                    if feedback_items:
-                        feedback_content = "\n".join(item["content"] for item in feedback_items)
-                        combined_content += f"\n\n{feedback_content}"
-
-                    log_event(self.logger, "memory.transfer.content",
-                             f"Combined content:\n{combined_content[:100]}...",
-                             level="DEBUG")
-                    # Extract atomic memories using LLM
-                    
-                    full_prompt = self._xfer_long_term_prompt + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + self._xfer_long_term_schema
-
-                    atomic_response = await self.client.chat.completions.create(
-                        model=self.config.submodel,
-                        messages=[
-                            {"role": "system", "content": full_prompt},
-                            {"role": "user", "content": f"Memory content:\n{combined_content}"}
-                        ],
-                        response_format={ "type": "json_object" }
-                    )
-                    
-                    # Parse and validate the LLM response
-                    raw_response = atomic_response.choices[0].message.content
-                    log_event(self.logger, "memory.atomic.response", f"Raw LLM response: {raw_response}", level="DEBUG")
-
-                    try:
-                        atomic_memories = json.loads(raw_response)
-                        # Check if response has memories/atomic_memories key and convert to list
-                        if isinstance(atomic_memories, dict):
-                            for key in ["memories", "atomic_memories", "atomized_memories"]:
-                                if key in atomic_memories:
-                                    atomic_memories = atomic_memories[key]
-                                    break
-                        
-                        # Ensure atomic_memories is a list
-                        if not isinstance(atomic_memories, list):
-                            atomic_memories = [atomic_memories]
-                        
-                        # Validate each memory has required fields
-                        validated_memories = []
-                        required_fields = ["statement", "metatags", "thoughts", "confidence", "category"]
-                        
-                        for memory in atomic_memories:
-                            if isinstance(memory, dict) and all(k in memory for k in required_fields):
-                                validated_memories.append(memory)
-                            else:
-                                log_event(self.logger, "memory.atomic.invalid", 
-                                         f"Invalid memory format, missing required fields: {memory}",
-                                         level="DEBUG")
-                        
-                        if not validated_memories:
-                            # If no valid memories, retry with LLM with more explicit instructions
-                            retry_prompt = (
-                                f"{self._xfer_long_term_prompt}\n\n"
-                                "IMPORTANT: Your response must be a JSON array of objects with this exact structure:\n"
-                                f"{self._xfer_long_term_schema}"
-                            )
-                            
-                            retry_response = await self.client.chat.completions.create(
-                                model=self.config.submodel,
-                                messages=[
-                                    {"role": "system", "content": retry_prompt},
-                                    {"role": "user", "content": f"Previous response was invalid. Please reformat this content into the exact structure specified:\n{raw_response}"}
-                                ],
-                                response_format={ "type": "json_object" }
-                            )
-                            
-                            retry_content = retry_response.choices[0].message.content
-                            log_event(self.logger, "memory.atomic.retry", f"Retry response: {retry_content}", level="DEBUG")
-                            
-                            try:
-                                retry_json = json.loads(retry_content)
-                                if isinstance(retry_json, dict) and "atomic_memories" in retry_json:
-                                    validated_memories = retry_json["atomic_memories"]
-                                else:
-                                    log_error(self.logger, "Retry failed to produce valid format")
-                                    continue
-                            except json.JSONDecodeError:
-                                log_error(self.logger, f"Failed to parse retry response as JSON: {retry_content}")
-                                continue
-
-                        # Continue processing with validated_memories
-                        for atomic in validated_memories:
-                            try:
-                                # Get original memory metadata safely
-                                original_metadata = memory.get("metadata", {})
-                                
-                                metadata = {
-                                    "memory_id": str(uuid.uuid4()),
-                                    "original_timestamp": original_metadata.get("timestamp", datetime.now().isoformat()),
-                                    "source_type": "atomic_memory",
-                                    "confidence": atomic.get("confidence", 0.5),  # Default confidence if missing
-                                    "category": atomic.get("category", "uncategorized"),  # Default category if missing
-                                    "timestamp": datetime.now().isoformat(),
-                                    "original_memory_id": original_metadata.get("chroma_id", "unknown"),  # Track original memory
-                                    "conversation_id": original_metadata.get("conversation_id", "unknown")
-                                }
-
-                                formatted_memory = (
-                                    f"{atomic['statement']}\n\n"
-                                    f"MetaTags: {', '.join(atomic.get('metatags', []))}\n\n"
-                                    f"Thoughts: {atomic.get('thoughts', 'No additional thoughts')}"
-                                )
-                                
-                                await self.memory.store(
-                                    content=atomic["statement"],
-                                    collection_name="long_term",
-                                    metadata=metadata
-                                )
-                                
-                                log_event(self.logger, "memory.atomic.stored",
-                                         f"Stored atomic memory: {atomic['statement']} ({atomic.get('category', 'uncategorized')})",
-                                         level="DEBUG")
-                            except Exception as e:
-                                log_error(self.logger, f"Failed to store atomic memory: {str(e)}")
-                                continue
-
-                        # Save to disk with the stored original metadata
-                        await self._save_atomic_memory_to_disk(atomic_memories, original_metadata)
-
-                    except json.JSONDecodeError:
-                        log_error(self.logger, f"Failed to parse LLM response as JSON: {raw_response}")
-                        raise
-
-                except Exception as e:
-                    log_error(self.logger, f"Failed to process conversation {conv_id} into atomic form: {str(e)}", exc_info=e)
-                    continue
-            
-            log_event(self.logger, "memory.atomization.complete",
-                     f"Completed memory atomization for {len(short_term_memories)} memories",
-                     level="DEBUG")
-             
-        except Exception as e:
-            log_error(self.logger, "Failed to atomize memories", exc_info=e)
-        finally:
-            if self.status == AgentStatus.MEMORISING:
-                await self.set_status(self._previous_status, "Memory atomization complete")
+        return await transfer_to_long_term_impl(self, days_threshold)
 
     async def _save_atomic_memory_to_disk(self, atomic_memories: List[Dict], original_metadata: Dict) -> None:
         """Save atomic memories to disk for debugging/backup."""
@@ -713,221 +542,11 @@ class MemeticAgent(BaseAgent):
                            Memories older than this will be processed into long-term storage.
                            Default is 0 (process all memories).
         """
-        try:
-            if self.status != AgentStatus.MEMORISING:
-                log_error(self.logger, "Agent must be in MEMORISING state to extract learnings")
-                return
-                # await self.set_status(AgentStatus.MEMORISING, "Extracting Learnings triggered")
-            
-            log_event(self.logger, "agent.memorising", "Beginning learning memory extraction process", level="DEBUG")
-            
-            # Retrieve and filter memories
-            short_term_memories = await self.memory.retrieve(
-                query="",
-                collection_names=["short_term"],
-                n_results=1000  # Hard limit (1000 entries) prevents infinite processing
-            )
-            
-            # Filter memories based on threshold
-            threshold_date = datetime.now() - timedelta(days=days_threshold)
-            short_term_memories = [
-                memory for memory in short_term_memories
-                if datetime.fromisoformat(memory["metadata"].get("timestamp", "")) < threshold_date
-            ]
-            
-            total_memories = len(short_term_memories)
-            log_event(self.logger, "memory.extraction.progress", 
-                     f"Found {total_memories} memories to process")
-            
-            if not short_term_memories:
-                log_error(self.logger, "memory.error", "No recent memories found for reflection")
-                # await self.set_status(self._previous_status, "No recent memories found for reflection")
-                return
-
-            # Group and sort memories
-            conversation_memories = {}
-            for memory in short_term_memories:
-                conv_id = memory["metadata"].get("conversation_id")
-                if conv_id not in conversation_memories:
-                    conversation_memories[conv_id] = []
-                conversation_memories[conv_id].append(memory)
-
-            total_conversations = len(conversation_memories)
-            log_event(self.logger, "memory.extraction.progress", 
-                     f"Grouped into {total_conversations} conversations")
-
-            # Process each conversation group
-            for conv_idx, (conv_id, memories) in enumerate(conversation_memories.items(), 1):
-                try:
-                    log_event(self.logger, "memory.extraction.progress", 
-                             f"Processing conversation {conv_idx} of {total_conversations}")
-                    
-                    # Sort memories within conversation by timestamp
-                    memories.sort(key=lambda x: datetime.fromisoformat(x["metadata"].get("timestamp", "")))
-                    
-                    # Combine memory content
-                    combined_content = "\n".join(memory["content"] for memory in memories)
-                    
-                    # Get feedback for this conversation
-                    feedback_items = await self.memory.retrieve(
-                        query="",
-                        collection_names=["feedback"],
-                        n_results=100,  # Hard limit prevents infinite feedback processing
-                        metadata_filter={"conversation_id": conv_id}
-                    )
-
-                    if feedback_items:
-                        feedback_content = "\n".join(item["content"] for item in feedback_items)
-                        combined_content += f"\n\nFeedback:\n{feedback_content}"
-
-                    full_prompt = self._reflect_memories_prompt + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + self._reflect_memories_schema
-
-                    # Extract learnings using LLM
-                    reflection_response = await self.client.chat.completions.create(
-                        model=self.config.submodel,
-                        messages=[
-                            {"role": "system", "content": full_prompt},
-                            {"role": "user", "content": f"Memory content:\n{combined_content}"}
-                        ],
-                        response_format={ "type": "json_object" }
-                    )
-                    
-                    raw_response = reflection_response.choices[0].message.content
-                    
-                    # Process reflections with one retry attempt
-                    try:
-                        reflections = self._process_reflection_response(raw_response)
-                        if not reflections:  # If initial processing fails, try retry prompt
-                            reflections = await self._retry_reflection_processing(
-                                self._reflect_memories_prompt, raw_response
-                            )
-                            if not reflections:  # If retry fails, skip this conversation
-                                log_event(self.logger, "memory.reflection.skip", 
-                                         f"Skipping conversation {conv_id} due to invalid response format")
-                                continue
-                        
-                        # Store validated reflections
-                        total_reflections = len(reflections)
-                        for refl_idx, reflection in enumerate(reflections, 1):
-                            log_event(self.logger, "memory.reflection.progress", 
-                                     f"Storing reflection {refl_idx} of {total_reflections} for conversation {conv_idx}")
-                            
-                            await self._store_reflection(reflection, conv_id, memories[0]["metadata"])
-                        
-                        # Save to disk for debugging
-                        await self._save_reflection_to_disk(reflections, memories[0]["metadata"])
-                        
-                    except Exception as e:
-                        log_error(self.logger, f"Failed to process reflections for conversation {conv_id}: {str(e)}")
-                        continue
-
-                except Exception as e:
-                    log_error(self.logger, f"Failed to process conversation {conv_id}: {str(e)}")
-                    continue
-            
-            log_event(self.logger, "memory.reflection.complete",
-                     f"Completed memory reflection for {total_conversations} conversations")
-             
-        except Exception as e:
-            log_error(self.logger, "Failed to process reflections", exc_info=e)
-        finally:
-            if self.status == AgentStatus.MEMORISING:
-                await self.set_status(self._previous_status, "Memory reflection complete")
+        return await extract_learnings_impl(self, days_threshold)
 
     async def _run_learning_subroutine(self, category: str = None) -> None:
         """Run the learning subroutine."""
         return await learning_subroutine(self, category)
-
-    def _process_reflection_response(self, raw_response: str) -> List[Dict]:
-        """Process and validate reflection response from LLM."""
-        try:
-            reflections = json.loads(raw_response)
-            # Check for various possible key names
-            if isinstance(reflections, dict):
-                for key in ["learning_opportunities", "lessons", "reflections", "learnings"]:
-                    if key in reflections:
-                        reflections = reflections[key]
-                        break
-            
-            # Ensure reflections is a list
-            if not isinstance(reflections, list):
-                reflections = [reflections]
-            
-            # Validate required fields
-            validated_reflections = []
-            required_fields = ["lesson", "importance", "category", "thoughts"]
-            
-            for reflection in reflections:
-                # Check if reflection is a dictionary and has all required fields
-                if isinstance(reflection, dict) and all(k in reflection for k in required_fields):
-                    # Check if category is valid
-                    if reflection["category"] in [
-                        "tools", "agentic structure", "give feedback", "feedback reflection", "memory reflection", "long term memory transfer", 
-                        "thought loop", "reasoning", "self improvement", "system prompt", "evaluator"
-                    ]:
-                        validated_reflections.append(reflection)
-                    else:
-                        log_error(self.logger, f"Invalid reflection category: {reflection['category']}")
-                else:
-                    log_error(self.logger, f"Invalid reflection format: {reflection}")
-            
-            return validated_reflections
-        except json.JSONDecodeError:
-            return []
-
-    async def _retry_reflection_processing(self, base_prompt: str, failed_response: str) -> List[Dict]:
-        """Retry processing reflections with more explicit instructions."""
-        retry_prompt = (
-            f"{base_prompt}\n\n"
-            "IMPORTANT: Your response must be a JSON object with this exact structure:\n"
-            '{\n'
-            '    "learning_opportunities": [\n'
-            '        {\n'
-            '            "lesson": "The main learning point",\n'
-            '            "importance": 0.8,\n'
-            '            "category": "category_name",\n'
-            '            "thoughts": "Additional context and reasoning"\n'
-            '        }\n'
-            '    ]\n'
-            '}'
-        )
-        
-        retry_response = await self.client.chat.completions.create(
-            model=self.config.submodel,
-            messages=[
-                {"role": "system", "content": retry_prompt},
-                {"role": "user", "content": f"Previous response was invalid. Please reformat this content into the exact structure specified:\n{failed_response}"}
-            ],
-            response_format={ "type": "json_object" }
-        )
-        
-        return self._process_reflection_response(retry_response.choices[0].message.content)
-
-    async def _store_reflection(self, reflection: Dict, conv_id: str, original_metadata: Dict) -> None:
-        """Store a single reflection in memory."""
-        metadata = {
-            "memory_id": str(uuid.uuid4()),
-            "conversation_id": conv_id,
-            "original_timestamp": original_metadata.get("timestamp"),
-            "source_type": "learning_reflection",
-            "importance": reflection["importance"],
-            "category": reflection["category"],
-            "timestamp": datetime.now().isoformat()
-        }
-
-        content = (
-            f"Lesson: {reflection['lesson']}\n"
-            f"Thoughts: {reflection['thoughts']}\n"
-        )
-
-        await self.memory.store(
-            content=reflection["lesson"],
-            collection_name="reflections",
-            metadata=metadata
-        )
-        
-        log_event(self.logger, "memory.reflection.stored",
-                 f"Stored learning reflection: {reflection['lesson']} ({reflection['category']})", level="DEBUG")
 
     async def _save_reflection_to_disk(self, reflections: List[Dict], original_metadata: Dict) -> None:
         """Save learning reflections to disk for debugging/backup."""
@@ -1085,8 +704,19 @@ class MemeticAgent(BaseAgent):
     async def _start_sleeping(self) -> None:
         """Start the sleeping subroutine."""
         return await _start_sleeping_impl(self)
+
+    async def _continue_or_stop(self, messages: List[Message]) -> str:
+        """Evaluate message content to determine if we should continue or stop.
+
+        Args:
+            messages: List of conversation messages to evaluate
+            
+        Returns:
+            "STOP" if conversation should end, or a rephrased continuation message
+        """
+        return await continue_or_stop_impl(self, messages)
         
-#TODO: The agent needs to eb able to call up things like its architecture or curent prompts 
+#TODO: The agent needs to be able to call up things like its architecture or curent prompts 
 # so that it can use them when reflecting on memories.
 
 #TODO: The agent needs to be able to call up its current system prompt and use it when reflecting on memories.

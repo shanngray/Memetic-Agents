@@ -2,6 +2,8 @@ from typing import Any
 from src.log_config import log_event, log_error
 import httpx
 from datetime import datetime
+import json
+from icecream import ic
 from src.base_agent.type import Agent
 
 async def evaluate_and_send_feedback_impl(
@@ -13,7 +15,7 @@ async def evaluate_and_send_feedback_impl(
     """Evaluate response quality and send feedback to the agent."""
     try:
         # Get evaluation from LLM
-        score, feedback = await agent._evaluate_response(response_content)
+        score, feedback = await evaluate_response_impl(agent, response_content)
         
         # Send feedback via API
         async with httpx.AsyncClient() as client:
@@ -41,7 +43,7 @@ async def evaluate_and_send_feedback_impl(
 async def evaluate_response_impl(agent: Agent, response_content: str) -> tuple[int, str]:
     """Evaluate response quality using LLM."""
     try:
-        full_prompt = agent._give_feedback_prompt + "\n\nFormat your response as a JSON object with the following schema:\n" + agent._give_feedback_schema
+        full_prompt = agent.prompt.give_feedback.content + "\n\nFormat your response as a JSON object with the following schema:\n" + agent.prompt.give_feedback.schema
         response = await agent.client.chat.completions.create(
             model=agent.config.model,
             messages=[

@@ -12,6 +12,7 @@ from .models import Message, AgentStatus
 from .config import AgentConfig
 from src.log_config import setup_logger
 from src.api_server.models.api_models import APIMessage
+from .prompt_library import PromptLibrary, PromptEntry
 
 
 class Agent:
@@ -45,37 +46,8 @@ class Agent:
         self._status_lock = asyncio.Lock()
         self._shutdown_event = asyncio.Event()
 
-        # System Prompts
-        self._system_prompt = "You are a helpful AI assistant"
-        self._give_feedback_prompt = "Placeholder for giving feedback"
-        self._thought_loop_prompt = "Placeholder for deciding whether to continue or stop"
-        self._xfer_long_term_prompt = "Placeholder for transferring long term memories"
-        self._xfer_feedback_prompt = "Placeholder for transferring feedback"
-        self._reflect_feedback_prompt = "Placeholder for reflecting on feedback"
-        self._evaluator_prompt = "Placeholder for evaluating prompts"
-        self._reasoning_prompt = "Placeholder for reasoning module"
-        self._reflect_memories_prompt = "Placeholder for reflecting on memories"
-        self._self_improvement_prompt = "Placeholder for self improvement"
-
-        # System Prompt Schemas - schemas are in json format but stored as strings
-        self._xfer_long_term_schema: str = ""
-        self._reflect_memories_schema: str = ""
-        self._self_improvement_schema: str = ""
-        self._give_feedback_schema: str = ""
-
-        # System Prompt Confidence Scores (Floating Point between 0 and 10)
-        self._prompt_confidence_scores = {
-            "system": 0.0,
-            "give_feedback": 0.0,
-            "thought_loop": 0.0,
-            "xfer_long_term": 0.0,
-            "xfer_feedback": 0.0,
-            "reflect_feedback": 0.0,
-            "evaluator": 0.0,
-            "reasoning": 0.0,
-            "reflect_memories": 0.0,
-            "self_improvement": 0.0
-        }
+        # Replace individual prompt attributes with PromptLibrary instance
+        self.prompt = PromptLibrary()
 
         # Request handling
         self.pending_requests: Dict[str, asyncio.Future] = {}
@@ -97,36 +69,35 @@ class Agent:
         self.agent_directory = None
 
     async def initialize(self) -> None:
-        """Async initialization to load all required files. Run from server.py"""
+        """Async initialization to load all required files. Run from main.py"""
         raise NotImplementedError("Subclasses must implement initialize")
     #TODO: the prompt_mapping needs to be kept in sync with both individual agents prompts and the master list of prompts
     def get_prompt_mapping(self) -> dict[str, str]:
         """Returns a mapping of prompt names to their current values."""
         return {
-            "system_prompt": self._system_prompt,
-            "reasoning_prompt": self._reasoning_prompt,
-            "give_feedback_prompt": self._give_feedback_prompt,
-            "reflect_feedback_prompt": self._reflect_feedback_prompt,
-            "reflect_memories_prompt": self._reflect_memories_prompt,
-            "self_improvement_prompt": self._self_improvement_prompt,
-            "thought_loop_prompt": self._thought_loop_prompt,
-            "xfer_long_term_prompt": self._xfer_long_term_prompt,
-            "evaluator_prompt": self._evaluator_prompt
+            name: getattr(self.prompt, prompt_type).content or ""
+            for name, prompt_type in {
+                "system_prompt": "system",
+                "reasoning_prompt": "reasoning",
+                "give_feedback_prompt": "give_feedback",
+                "reflect_feedback_prompt": "reflect_feedback",
+                "reflect_memories_prompt": "reflect_memories",
+                "self_improvement_prompt": "self_improvement",
+                "thought_loop_prompt": "thought_loop",
+                "xfer_long_term_prompt": "xfer_long_term",
+                "evaluator_prompt": "evaluator"
+            }.items()
         }
 
     def get_prompt_schema(self, prompt_name: str) -> str | None:
         """Returns the schema for a given prompt name."""
-        if prompt_name == "xfer_long_term_prompt":
-            return self._xfer_long_term_schema
-        elif prompt_name == "reflect_memories_prompt":
-            return self._reflect_memories_schema
-        elif prompt_name == "self_improvement_prompt":
-            return self._self_improvement_schema
-        elif prompt_name == "give_feedback_prompt":
-            return self._give_feedback_schema
-        else:
-            return None
-
+        prompt_map = {
+            "xfer_long_term_prompt": self.prompt.xfer_long_term.schema,
+            "reflect_memories_prompt": self.prompt.reflect_memories.schema,
+            "self_improvement_prompt": self.prompt.self_improvement.schema,
+            "give_feedback_prompt": self.prompt.give_feedback.schema
+        }
+        return prompt_map.get(prompt_name)
 
     async def process_message(self, content: str, sender: str, conversation_id: str) -> str:
         """Process an incoming message.

@@ -50,7 +50,7 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             second_agent_prompt = prompt_mapping[prompt_type]
 
             combined_evaluator_prompt = (
-                f"{agent._evaluator_prompt}\n\nType of prompt being evaluated: {prompt_type}"
+                f"{agent.prompt.evaluator.content}\n\nType of prompt being evaluated: {prompt_type}"
                 f"\n\n{second_agent}'s version of prompt: {second_agent_prompt}"
                 f"\n\nFormat the output as a JSON object with the following schema:"
                 "{\n"
@@ -133,7 +133,7 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             first_agent_prompt = prompt_mapping[prompt_type]
 
             combined_evaluator_prompt = (
-                f"{agent._evaluator_prompt}\n\nType of prompt being evaluated: {prompt_type}"
+                f"{agent.prompt.evaluator.content}\n\nType of prompt being evaluated: {prompt_type}"
                 f"\n\n{first_agent}'s version of prompt: {first_agent_prompt}"
                 f"\n\nFormat the output as a JSON object with the following schema:"
                 "{\n"
@@ -153,9 +153,8 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             await asyncio.sleep(0.1)  # Yield control before evaluation
             first_agent_initial_eval = await evaluate_prompt(agent, combined_evaluator_prompt, combined_evaluator_message, "EvalResponse")
 
-            #TODO: Need to implement updated schema logic
             combined_updater_prompt = (
-                f"{agent._evaluator_prompt}\n\nType of prompt being updated: {prompt_type}"
+                f"{agent.prompt.evaluator.content}\n\nType of prompt being updated: {prompt_type}"
                 f"\n\n{first_agent}'s version of prompt: {first_agent_prompt}"
             )
 
@@ -254,7 +253,7 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             second_agent_prompt = prompt_mapping[prompt_type]
 
             combined_evaluator_prompt = (
-                f"{agent._evaluator_prompt}\n\nType of prompt being re-evaluated: {prompt_type}"
+                f"{agent.prompt.evaluator.content}\n\nType of prompt being re-evaluated: {prompt_type}"
                 f"\n\n{second_agent}'s version of prompt: {second_agent_prompt}"
                 f"\n\nFormat the output as a JSON object with the following schema:"
                 "{\n"
@@ -278,7 +277,7 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
 
             #TODO: Need to implement updated schema logic
             combined_updater_prompt = (
-                f"{agent._evaluator_prompt}\n\nType of prompt being updated: {prompt_type}"
+                f"{agent.prompt.evaluator.content}\n\nType of prompt being updated: {prompt_type}"
                 f"\n\n{second_agent}'s version of prompt: {second_agent_prompt}"
             )
 
@@ -371,7 +370,7 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             first_agent_prompt = prompt_mapping[prompt_type]
 
             combined_evaluator_prompt = (
-                f"{agent._evaluator_prompt}\n\nType of prompt being re-evaluated: {prompt_type}"
+                f"{agent.prompt.evaluator.content}\n\nType of prompt being re-evaluated: {prompt_type}"
                 f"\n\n{first_agent}'s version of prompt: {first_agent_prompt}"
                 f"\n\nFormat the output as a JSON object with the following schema:"
                 "{\n"

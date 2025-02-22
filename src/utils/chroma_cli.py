@@ -136,12 +136,18 @@ async def reset_collection(client, target: str) -> None:
             collections = client.list_collections()
             if await confirm_action("reset", "ALL collections"):
                 for collection in collections:
-                    collection.delete(where={})
+                    # Get all document IDs first
+                    results = collection.get()
+                    if results["ids"]:  # Only delete if there are documents
+                        collection.delete(ids=results["ids"])
                 print("\nSuccessfully reset all collections.")
         else:
             collection = client.get_collection(target)
             if await confirm_action("reset", f"collection '{target}'"):
-                collection.delete(where={})
+                # Get all document IDs first
+                results = collection.get()
+                if results["ids"]:  # Only delete if there are documents
+                    collection.delete(ids=results["ids"])
                 print(f"\nSuccessfully reset collection: {target}")
                 
     except Exception as e:

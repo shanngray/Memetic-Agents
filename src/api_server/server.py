@@ -517,11 +517,6 @@ async def setup_agent_server(agent: BaseAgent) -> asyncio.Task:
     )
     agent_logger.info(f"Setting up agent: {agent.config.agent_name}")
     
-    # Initialize the agent first
-    await agent.initialize()
-    
-    await asyncio.sleep(0.1)  # Yield control after initialization
-    
     # Create FastAPI app for the agent
     agent_app = FastAPI()
     

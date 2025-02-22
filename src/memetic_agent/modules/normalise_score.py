@@ -35,7 +35,7 @@ def normalise_score(agent: Agent, score: Any) -> int:
         normalised_score = max(0, min(10, round(score_float)))
         
         log_event(agent.logger, "confidence.evaluation", 
-                 f"Normalised score: {normalised_score} (from original: {score})", 
+                 f"Normalised score: {normalised_score} (from original: {score} of type {type(score).__name__})", 
                  level="DEBUG")
         
         return normalised_score

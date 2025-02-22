@@ -1,5 +1,7 @@
 from src.base_agent.type import Agent
 from src.log_config import log_event, log_error
+from base_agent.models import AgentStatus
+from src.log_config import log_event, log_error
 import asyncio
 
 async def _start_sleeping_impl(agent: Agent) -> None:

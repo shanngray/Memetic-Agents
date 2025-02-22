@@ -20,7 +20,7 @@ from filelock import FileLock
 from icecream import ic
 import contextvars
 import threading
-
+from rich.logging import RichHandler
 # Add the project root directory to the Python path
 sys.path.append(str(Path(__file__).parents[2]))
 
@@ -64,21 +64,21 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         log_event(self.logger, "agent.init", 
                  f"Initializing {self.__class__.__name__} (PID: {os.getpid()}, Thread: {threading.current_thread().name})")
 
-        # Load System Prompts
-        self._system_prompt = self.config.system_prompt
-        self._give_feedback_prompt = """Evaluate the quality of the following response. 
+        # Initialize prompt library with content
+        self.prompt.system.content = self.config.system_prompt
+        self.prompt.give_feedback.content = """Evaluate the quality of the following response. 
                 Provide:
                 1. A score from 0-10 (where 10 is excellent)
                 2. Brief, constructive feedback (Include WHAT is good/bad, WHY it matters, and HOW to improve)
                 
                 Format your response as a JSON object with 'score' and 'feedback' fields."""
-        self._thought_loop_prompt = (
-                    "Based on the conversation so far, determine if a complete response has been provided "
-                    "and if the initial query has been fully addressed. If complete, respond with exactly 'STOP'. "
-                    "Otherwise, respond with clear instructions on what steps to take next, starting with 'We still need to...' "
-                    "and ending with '...Please continue.'"
-                )
-        self._xfer_long_term_prompt = """Analyze this memory and extract information in SPO (Subject-Predicate-Object) format.
+        self.prompt.thought_loop.content = (
+            "Based on the conversation so far, determine if a complete response has been provided "
+            "and if the initial query has been fully addressed. If complete, respond with exactly 'STOP'. "
+            "Otherwise, respond with clear instructions on what steps to take next, starting with 'We still need to...' "
+            "and ending with '...Please continue.'"
+        )
+        self.prompt.xfer_long_term.content = """Analyze this memory and extract information in SPO (Subject-Predicate-Object) format.
                             Format your response as a JSON object with this structure:
                             {
                                 "memories": [
@@ -93,7 +93,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                             
                             Include type as a tag and add other relevant topic/context tags.
                             Keep statements clear and concise.
-                            
+                                                        
                             Example Input: 'During the community meeting last Tuesday, Sarah Johnson presented a detailed proposal for a new youth center 
                             downtown. The proposal included a $500,000 budget plan and received strong support from local business owners. Several attendees 
                             raised concerns about parking availability, but Sarah addressed these by suggesting a partnership with the nearby church for 
@@ -112,7 +112,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                                 ]
                             }
                             """
-        self._xfer_feedback_prompt = """Analyze this feedback and extract key insights.
+        self.prompt.xfer_feedback.content = """Analyze this feedback and extract key insights.
                         Format your response as a JSON object with this structure:
                         {
                             "insights": [
@@ -125,7 +125,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                                 }
                             ]
                         }"""
-        self._reflect_feedback_prompt = """You are an analytical assistant helping to reflect on feedback received.
+        self.prompt.reflect_feedback.content = """You are an analytical assistant helping to reflect on feedback received.
                 Consider patterns, trends, and areas for improvement. Focus on actionable insights
                 and concrete steps for improvement."""
 
@@ -154,7 +154,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         signal.signal(signal.SIGTERM, self._handle_shutdown)
 
     async def initialize(self) -> None:
-        """Implemented in MemeticAgent only. Run from server.py"""
+        """Implemented in MemeticAgent only. Run from main.py"""
         pass
 
     def _setup_logging(self) -> None:
@@ -174,7 +174,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                 
                 # Add console handler only if enabled
                 if self.config.console_logging:
-                    console_handler = logging.StreamHandler()
+                    console_handler = logging.RichHandler()
                     console_handler.setFormatter(formatter)
                     self.logger.addHandler(console_handler)
                     
@@ -182,7 +182,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                 
             self.logger.info("BaseAgent initialized")
 
-        log_event(self.logger, "agent.registered", f"Initialized {self.config.agent_name}")
+        log_event(self.logger, "agent.registered", f"Initialized \"{self.config.agent_name}\"")
 
     def _load_tool_definitions(self) -> None:
         """Load tool definitions from JSON files."""
@@ -228,14 +228,10 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             # Create prompt to evaluate conversation state
             system_prompt = Message(
                 role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system",
-                content=self._thought_loop_prompt
+                content=self.prompt.thought_loop.content
             )
             
-            # OLD APPROACH - Swap system prompt with thought loop prompt
-            #messages = messages[1:]  # Remove first message
-            #messages.insert(0, system_prompt)  # Add new system prompt at start
-            
-            # NEW APPROACH - Add thought loop prompt to the end of the message list
+            # Add thought loop prompt to the end of the message list
             messages.append(system_prompt)
             
             # Make LLM call to evaluate
@@ -306,7 +302,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
         response_content: str
     ) -> None:
         """Evaluate response quality and send feedback to the agent."""
-        return await evaluate_feedback_impl(self, receiver, conversation_id, response_content)
+        return await evaluate_and_send_feedback_impl(self, receiver, conversation_id, response_content)
 
     async def _evaluate_response(self, response_content: str) -> Tuple[int, str]:
         """Evaluate response quality using LLM."""
@@ -371,7 +367,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             for conv_id, group in conversation_groups.items():
                 try:
                     # Start with system prompt
-                    messages = [Message(role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system", content=self._system_prompt)]
+                    messages = [Message(role="user" if self.config.model == "o1-mini" else "developer" if self.config.model == "o3-mini" else "system", content=self.prompt.system.content)]
                     
                     # Combine all content for this conversation
                     combined_content = "\n".join(group["content"])
@@ -442,93 +438,179 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             latest_timestamps = {}
             
             for conversation_id in self.conversations:
-                # Changed from get() with order_by to get() with where clause
-                results = short_term.get(
-                    where={"conversation_id": conversation_id}
-                )
-                
-                # Manually find the latest timestamp from results
-                if results["metadatas"]:
-                    timestamps = [
-                        metadata.get("timestamp") 
-                        for metadata in results["metadatas"] 
-                        if metadata.get("timestamp")
-                    ]
-                    if timestamps:
-                        latest_timestamps[conversation_id] = max(timestamps)
+                try:
+                    # Protect against ChromaDB query failures
+                    results = short_term.get(
+                        where={"conversation_id": conversation_id}
+                    )
+                    
+                    # Validate results structure
+                    if not isinstance(results, dict) or "metadatas" not in results:
+                        log_error(self.logger, 
+                                 f"Invalid results format for conversation {conversation_id}")
+                        continue
+                    
+                    # Safely extract timestamps with validation
+                    if results["metadatas"]:
+                        try:
+                            timestamps = []
+                            for metadata in results["metadatas"]:
+                                if not isinstance(metadata, dict):
+                                    continue
+                                timestamp = metadata.get("timestamp")
+                                if timestamp:
+                                    # Validate timestamp format
+                                    try:
+                                        datetime.fromisoformat(timestamp)
+                                        timestamps.append(timestamp)
+                                    except ValueError:
+                                        log_error(self.logger,
+                                                f"Invalid timestamp format in metadata: {timestamp}")
+                                        continue
+                            latest_timestamps[conversation_id] = max(timestamps) if timestamps else None
+                        except Exception as e:
+                            log_error(self.logger,
+                                    f"Error processing timestamps for conversation {conversation_id}: {str(e)}")
+                            latest_timestamps[conversation_id] = None
                     else:
                         latest_timestamps[conversation_id] = None
-                else:
+                    
+                except Exception as e:
+                    log_error(self.logger,
+                             f"Failed to get timestamps for conversation {conversation_id}: {str(e)}")
                     latest_timestamps[conversation_id] = None
 
             # Save only new messages for each conversation
             for conversation_id, conversation in self.conversations.items():
-                latest_timestamp = latest_timestamps.get(conversation_id)
-                
-                # Filter messages that are newer than the latest saved timestamp
-                new_messages = []
-                if latest_timestamp:
-                    new_messages = [
-                        msg for msg in conversation 
-                        if msg.role != "system" and msg.timestamp > latest_timestamp
-                    ]
-                else:
-                    # If no previous messages, save all except system message
-                    new_messages = [msg for msg in conversation if msg.role != "system"]
-
-                if not new_messages:
-                    continue
-
-                # Format new messages for storage
-                content = "\n".join([
-                    f"{msg.role}: {msg.content}" 
-                    for msg in new_messages
-                ])
-                
-                # Get all participants from new messages
-                participants = set(
-                    getattr(msg, 'sender', None) or msg.role 
-                    for msg in new_messages
-                )
-                participants_str = ",".join(sorted(participants))
-                
-                metadata = {
-                    "conversation_id": conversation_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "participants": participants_str
-                }
-                
                 try:
-                    await self.memory.store(
-                        content=content,
-                        collection_name="short_term",
-                        metadata=metadata
-                    )
-                    log_event(self.logger, "memory.saved", 
-                             f"Saved {len(new_messages)} new messages for conversation {conversation_id}")
+                    latest_timestamp = latest_timestamps.get(conversation_id)
                     
-                    # Save memory dump to disk
-                    memory_dump_path = self.files_path / f"{self.config.agent_name}_short_term_memory_dump.md"
+                    # Filter and validate messages
+                    new_messages = []
+                    for msg in conversation:
+                        try:
+                            if msg.role == "system":
+                                continue
+                                
+                            # Validate message attributes
+                            if not all(hasattr(msg, attr) for attr in ['content', 'role', 'timestamp']):
+                                log_error(self.logger,
+                                        f"Message missing required attributes in conversation {conversation_id}")
+                                continue
+                                
+                            # Validate timestamp format
+                            try:
+                                msg_time = datetime.fromisoformat(msg.timestamp)
+                            except (ValueError, TypeError):
+                                log_error(self.logger,
+                                        f"Invalid message timestamp format in conversation {conversation_id}")
+                                continue
+                                
+                            # Compare timestamps if we have a latest_timestamp
+                            if latest_timestamp:
+                                try:
+                                    if msg_time > datetime.fromisoformat(latest_timestamp):
+                                        new_messages.append(msg)
+                                except ValueError:
+                                    log_error(self.logger,
+                                            f"Timestamp comparison failed in conversation {conversation_id}")
+                                    continue
+                            else:
+                                new_messages.append(msg)
+                                
+                        except Exception as e:
+                            log_error(self.logger,
+                                    f"Error processing message in conversation {conversation_id}: {str(e)}")
+                            continue
+
+                    if not new_messages:
+                        continue
+
+                    # Format new messages with validation
                     try:
-                        with FileLock(f"{memory_dump_path}.lock"):
-                            with open(memory_dump_path, "a", encoding="utf-8") as f:
-                                # Add timestamp header
-                                f.write(f"\n\n## Memory Entry {datetime.now().isoformat()}\n")
-                                for key, value in metadata.items():
-                                    f.write(f"{key}: {value}\n")
-                                f.write("\n")
-                                f.write(content)
-                                f.write("\n---\n")
-                        log_event(self.logger, "memory.dumped", 
-                                f"Saved new messages for conversation {conversation_id} to disk")
+                        formatted_messages = []
+                        for msg in new_messages:
+                            if not isinstance(msg.content, str) or not isinstance(msg.role, str):
+                                log_error(self.logger,
+                                        f"Invalid message format in conversation {conversation_id}")
+                                continue
+                            formatted_messages.append(f"{msg.role}: {msg.content}")
+                        
+                        content = "\n".join(formatted_messages)
+                        
+                        # Validate content is not empty
+                        if not content.strip():
+                            log_error(self.logger,
+                                    f"Empty content generated for conversation {conversation_id}")
+                            continue
+                            
+                        # Get participants with validation
+                        participants = set()
+                        for msg in new_messages:
+                            participant = getattr(msg, 'sender', None) or msg.role
+                            if isinstance(participant, str):
+                                participants.add(participant)
+                        
+                        participants_str = ",".join(sorted(participants))
+                        
+                        metadata = {
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.now().isoformat(),
+                            "participants": participants_str
+                        }
+                        
                     except Exception as e:
                         log_error(self.logger,
-                                f"Failed to save conversation {conversation_id} to disk: {str(e)}")
+                                 f"Failed to format messages for conversation {conversation_id}: {str(e)}")
+                        continue
+
+                    # Save to memory store
+                    try:
+                        await self.memory.store(
+                            content=content,
+                            collection_name="short_term",
+                            metadata=metadata
+                        )
+                        log_event(self.logger, "memory.saved", 
+                                 f"Saved {len(new_messages)} new messages for conversation {conversation_id}")
+                    except Exception as e:
+                        log_error(self.logger,
+                                 f"Failed to save to memory store for conversation {conversation_id}: {str(e)}")
+                        continue
                     
+                    # Save to disk with error handling
+                    try:
+                        memory_dump_path = self.files_path / f"{self.config.agent_name}_short_term_memory_dump.md"
+                        
+                        # Prepare content before acquiring lock
+                        dump_content = (
+                            f"\n\n## Memory Entry {metadata['timestamp']}\n"
+                            f"conversation_id: {metadata['conversation_id']}\n"
+                            f"participants: {metadata['participants']}\n"
+                            f"timestamp: {metadata['timestamp']}\n\n"
+                            f"{content}\n---\n"
+                        )
+                        
+                        try:
+                            with FileLock(f"{memory_dump_path}.lock", timeout=10):  # 10 second timeout
+                                with open(memory_dump_path, "a", encoding="utf-8") as f:
+                                    f.write(dump_content)
+                            log_event(self.logger, "memory.dumped", 
+                                    f"Saved conversation {conversation_id} to disk")
+                        except TimeoutError:
+                            log_error(self.logger,
+                                    f"Failed to acquire file lock for conversation {conversation_id}")
+                        
+                    except Exception as e:
+                        log_error(self.logger,
+                                 f"Failed to save to disk for conversation {conversation_id}: {str(e)}")
+                        # Continue processing as memory store save was successful
+                        
                 except Exception as e:
-                    log_error(self.logger, 
-                             f"Failed to save conversation {conversation_id}: {str(e)}")
-                    
+                    log_error(self.logger,
+                             f"Failed to process conversation {conversation_id}: {str(e)}")
+                    continue
+                
         except Exception as e:
             log_error(self.logger, "Failed to save memory", exc_info=e)
 
@@ -649,7 +731,7 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                     response = await self.client.chat.completions.create(
                         model=self.config.submodel,
                         messages=[
-                            {"role": "system", "content": self._xfer_long_term_prompt},
+                            {"role": "system", "content": self.prompt.xfer_long_term.content},
                             {"role": "user", "content": f"Memory to analyze:\n{memory['content']}"}
                         ],
                         response_format={ "type": "json_object" }
@@ -797,28 +879,38 @@ class BaseAgent(Agent):  # Change to inherit from Agent
                 if datetime.fromisoformat(memory["metadata"].get("timestamp", "")) < cutoff_time
             ]
             
+            # Track conversation IDs to clean up
+            conversations_to_remove = set()
+            
             # Delete old memories using the ChromaDB ID from metadata
             deleted_count = 0
             for memory in old_memories:
                 chroma_id = memory["metadata"].get("chroma_id")
                 
-                # Only update old_conversation_list for short_term memories
+                # Track conversation ID for cleanup
                 if collection_name == "short_term":
                     conversation_id = memory["metadata"].get("conversation_id")
                     if conversation_id:
+                        conversations_to_remove.add(conversation_id)
                         self.old_conversation_list[conversation_id] = "placeholder_name"
                 
                 if chroma_id:
                     await self.memory.delete(chroma_id, collection_name)
                     deleted_count += 1
-                
+            
+            # Clean up conversations from memory
+            for conv_id in conversations_to_remove:
+                if conv_id in self.conversations:
+                    del self.conversations[conv_id]
+                    log_event(self.logger, "memory.cleanup", 
+                             f"Removed conversation {conv_id} from active conversations")
+            
             log_event(self.logger, "memory.cleanup", 
-                     f"Cleaned up {deleted_count} memories from {collection_name} collection")
+                     f"Cleaned up {deleted_count} memories from {collection_name} collection and {len(conversations_to_remove)} conversations")
              
         except Exception as e:
             log_error(self.logger, f"Failed to cleanup {collection_name} memories", exc_info=e)
 
-    #TODO: Need to fix internal tools so that the descriptions and tool definitions work properly.
     async def search_memory(self, query: str, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
         """Use to search your memory using a 'query' and (optional) 'keywords'.
         
@@ -830,11 +922,13 @@ class BaseAgent(Agent):  # Change to inherit from Agent
             Dict containing search results and metadata
         """
         try:
+            # Ensure keywords is a list if provided
+            if keywords and not isinstance(keywords, list):
+                keywords = [keywords]
+
             # Create metadata filter if keywords provided
             metadata_filter = None
             if keywords:
-                # Use $in operator instead of $contains for keyword matching
-                # This will match if any of the keywords exactly match the content
                 metadata_filter = {
                     "content": {"$in": keywords}
                 }

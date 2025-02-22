@@ -38,7 +38,7 @@ async def process_feedback_impl(agent: Agent, days_threshold: int = 0) -> None:
                 response = await agent.client.chat.completions.create(
                     model=agent.config.submodel,
                     messages=[
-                        {"role": "system", "content": agent._xfer_feedback_prompt},
+                        {"role": "system", "content": agent.prompt.xfer_feedback.content},
                         {"role": "user", "content": f"Feedback to analyze:\n{feedback['content']}"}
                     ],
                     response_format={ "type": "json_object" }

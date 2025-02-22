@@ -18,7 +18,7 @@ async def process_queue_impl(agent: Agent):
         # Log only if queue size changed or 60 seconds elapsed
         if current_size != agent._last_logged_size or (current_time - agent._last_queue_log) >= 60:
             log_event(agent.logger, "queue.state", 
-                     f"Process queue called - Status: {agent.status.name}, Queue size: {current_size}")
+                     f"Process queue called - Status: /{agent.status.name}, Queue size: {current_size}")
             agent._last_queue_log = current_time
             agent._last_logged_size = current_size
         
@@ -91,11 +91,9 @@ async def process_queue_impl(agent: Agent):
             finally:
                 if request:
                     agent.request_queue.task_done()
-                    if agent.status != AgentStatus.SHUTTING_DOWN:
-                        log_event(agent.logger, "agent.status", 
-                                 f"Agent Status changed from {agent.status.name} to AVAILABLE", 
-                                 level="DEBUG")
-                        await agent.set_status(AgentStatus.AVAILABLE, "completed message processing")
+                    log_event(agent.logger, "queue.completed", 
+                             f"Request {request['id']} completed", 
+                             level="DEBUG")
                 
     except Exception as e:
         log_error(agent.logger, f"Critical error in process_queue: {str(e)}", exc_info=e)

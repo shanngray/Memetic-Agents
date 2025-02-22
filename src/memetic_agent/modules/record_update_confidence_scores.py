@@ -74,7 +74,7 @@ async def _record_score_impl(agent: Agent, prompt_type: str, prompt_score: int, 
         # Get all required scores
         try:
             scores = {
-                "current": agent._prompt_confidence_scores.get(prompt_type, 1.0),
+                "current": getattr(agent.prompt, prompt_type).confidence,
                 "friends_initial": prompt_scores["friends_initial_eval"],
                 "friends_updated": prompt_scores["friends_updated_eval"],
                 "self_eval": prompt_scores["self_eval"]
@@ -125,8 +125,8 @@ async def _update_confidence_score_impl(agent: Agent, prompt_type: str, initial_
         
         weighting = 2 # Higher is more difficult to change
         
-        # Get current confidence score (defaults to 1.0)
-        current_confidence = agent._prompt_confidence_scores.get(prompt_type, 1.0)
+        # Get current confidence score (defaults to 0.0)
+        current_confidence = getattr(agent.prompt, prompt_type).confidence
         
         # Calculate friend's score improvement factor (-1 to 1)
         friend_score_improvement = (updated_friend_score - initial_friend_score) / 10
@@ -150,13 +150,19 @@ async def _update_confidence_score_impl(agent: Agent, prompt_type: str, initial_
         new_confidence = max(0.0, min(10.0, current_confidence + weighted_improvement))
         
         # Update confidence scores
-        agent._prompt_confidence_scores[prompt_type] = new_confidence
+        prompt_entry = getattr(agent.prompt, prompt_type)
+        prompt_entry.confidence = new_confidence
         
         async def save_confidence_scores():
             def _save():
                 with FileLock(f"{agent._prompt_confidence_scores_path}.lock"):
+                    # Convert prompt library to dict of confidence scores
+                    confidence_scores = {
+                        name: getattr(agent.prompt, name).confidence 
+                        for name in agent.prompt.__fields__
+                    }
                     agent._prompt_confidence_scores_path.write_text(
-                        json.dumps(agent._prompt_confidence_scores, indent=2)
+                        json.dumps(confidence_scores, indent=2)
                     )
             await asyncio.to_thread(_save)
         

@@ -84,9 +84,8 @@ src/agents/create_curio_agent.py
 src/agents/create_franken_agent.py
 src/agents/create_reschel_agent.py
 src/agents/create_socraryny_agent.py
-src/agents/store/create_blogger_agent.py
-src/agents/store/create_editor_agent.py
-src/agents/store/create_math_agent.py
-src/agents/store/create_research_agent.py
-src/agents/store/create_time_agent.py
+src/agents/create_anna_agent.py
+src/agents/store/
 docs/social-sequence-flow.md
+src/agents/store/create_anna_agent.py
+docs/memetic-agents-appendix.md
