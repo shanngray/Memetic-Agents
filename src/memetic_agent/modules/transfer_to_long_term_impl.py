@@ -84,7 +84,7 @@ async def transfer_to_long_term_impl(agent: Agent, days_threshold: int = 0) -> N
                             level="DEBUG")
                 # Extract atomic memories using LLM
                 
-                full_prompt = agent.prompt.xfer_long_term.content + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + agent.prompt.xfer_long_term.schema
+                full_prompt = agent.prompt.xfer_long_term.content + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + agent.prompt.xfer_long_term.schema_content
 
                 atomic_response = await agent.client.chat.completions.create(
                     model=agent.config.submodel,
@@ -129,7 +129,7 @@ async def transfer_to_long_term_impl(agent: Agent, days_threshold: int = 0) -> N
                         retry_prompt = (
                             f"{agent.prompt.xfer_long_term.content}\n\n"
                             "IMPORTANT: Your response must be a JSON array of objects with this exact structure:\n"
-                            f"{agent.prompt.xfer_long_term.schema}"
+                            f"{agent.prompt.xfer_long_term.schema_content}"
                         )
                         
                         retry_response = await agent.client.chat.completions.create(

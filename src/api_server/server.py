@@ -7,9 +7,10 @@ from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 import httpx
 import os
-from base_agent.base_agent import BaseAgent
+from base_agent.type import Agent
 from base_agent.config import AgentConfig
 from base_agent.models import AgentStatus
+from memetic_agent.memetic_agent import MemeticAgent
 from api_server.services.agent_directory import AgentDirectory, AgentDirectoryService
 from api_server.models.api_models import APIMessage, AgentResponse, FeedbackMessage, SocialMessage
 from src.log_config import setup_logger, log_event
@@ -507,7 +508,7 @@ async def start_directory_service():
     
     return server_task, app
 
-async def setup_agent_server(agent: BaseAgent) -> asyncio.Task:
+async def setup_agent_server(agent: MemeticAgent) -> asyncio.Task:
     """Configure and start an individual agent's HTTP server."""
     agent_logger = setup_logger(
         name=agent.config.agent_name,
@@ -516,12 +517,15 @@ async def setup_agent_server(agent: BaseAgent) -> asyncio.Task:
         console_logging=agent.config.console_logging
     )
     agent_logger.info(f"Setting up agent: {agent.config.agent_name}")
-    
+
     # Create FastAPI app for the agent
     agent_app = FastAPI()
     
     # Get log level from environment or default to INFO
-    server_log_level = os.getenv("SERVER_LOG_LEVEL", "INFO").upper()
+    server_log_level = os.getenv("SERVER_LOG_LEVEL", "INFO").upper()    
+    # Ensure agent is initialized before starting server
+    if hasattr(agent, 'initialize') and not getattr(agent, '_initialized', False):
+        await agent.initialize()
     
     # Start the agent's processing loop
     processing_task = asyncio.create_task(agent.start())
@@ -554,7 +558,7 @@ async def setup_agent_server(agent: BaseAgent) -> asyncio.Task:
     return agent, [processing_task, server_task]
 
 # NO LONGER IN USE
-async def setup_agent(name: str, port: int, system_prompt: str, tools: list, description: str) -> Tuple[BaseAgent, List[asyncio.Task]]:
+async def setup_agent(name: str, port: int, system_prompt: str, tools: list, description: str) -> Tuple[Agent, List[asyncio.Task]]:
     """Setup and register an agent with the directory service.
     
     Args:
@@ -587,7 +591,7 @@ async def setup_agent(name: str, port: int, system_prompt: str, tools: list, des
     # Create FastAPI app for the agent
     agent_app = FastAPI()
     
-    agent = BaseAgent(
+    agent = Agent(
         api_key=os.getenv("OPENAI_API_KEY"),
         config=config
     )
@@ -625,7 +629,7 @@ async def setup_agent(name: str, port: int, system_prompt: str, tools: list, des
     
     return agent, [processing_task, server_task]
 
-async def start_agent_server(agent: BaseAgent, port: int) -> asyncio.Task:
+async def start_agent_server(agent: MemeticAgent, port: int) -> asyncio.Task:
     """
     Start the HTTP server for an individual agent.
     
@@ -636,7 +640,7 @@ async def start_agent_server(agent: BaseAgent, port: int) -> asyncio.Task:
     - /health: Agent health check
     
     Args:
-        agent: BaseAgent instance to serve
+        agent: MemeticAgent instance to serve
         port: Port number to listen on
         
     Returns:

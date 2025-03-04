@@ -1,0 +1,26 @@
+{
+    "type": "function",
+    "function": {
+        "name": "search_memory",
+        "description": "Search through agent's memory using a query string and optional keywords",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query string to find relevant memories"
+                },
+                "keywords": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Optional list of keywords to help filter memory results"
+                }
+            },
+            "required": ["query", "keywords"],
+            "additionalProperties": false
+        },
+        "strict": true
+    }
+}

@@ -1,0 +1,34 @@
+{
+  "type": "function",
+  "function": {
+    "name": "update_prompt_module",
+    "description": "Update a specific prompt module and create a backup of the existing version",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "prompt_type": {
+          "type": "string",
+          "description": "The type of prompt to update",
+          "enum": [
+            "system_prompt",
+            "reasoning_prompt", 
+            "give_feedback_prompt",
+            "reflect_feedback_prompt",
+            "thought_loop_prompt",
+            "xfer_long_term_prompt",
+            "self_improvement_prompt",
+            "reflect_memories_prompt",
+            "evaluator_prompt"
+          ]
+        },
+        "new_prompt": {
+          "type": "string",
+          "description": "The new content to replace the existing prompt"
+        }
+      },
+      "required": ["prompt_type", "new_prompt"],
+      "additionalProperties": false
+    },
+    "strict": true
+  }
+}

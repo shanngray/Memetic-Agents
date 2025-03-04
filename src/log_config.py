@@ -186,6 +186,13 @@ EVENT_EMOJIS = {
     "social.message.response": "👥✅",
     "social.lonely": "👥💔",
 
+    # Feedback events
+    "feedback.evaluated": "📝📊",
+    "feedback.evaluated.error": "📝❌",
+    "feedback.received": "📝🤔",
+    "feedback.memorised": "📝💾",
+    "feedback.empty": "📝💭",
+
     # Confidence score events
     "confidence.evaluation": "🧠🔍",
     "confidence.recorded": "🧠💾",  

@@ -17,7 +17,7 @@ async def continue_or_stop_impl(agent: Agent, messages: List[Message]) -> str:
         # Create prompt to evaluate conversation state
         system_prompt = Message(
             role="user" if agent.config.model == "o1-mini" else "developer" if agent.config.model == "o3-mini" else "system",
-            content=f"{agent.prompt.thought_loop.content}\n\n{agent.prompt.thought_loop.schema}"
+            content=f"{agent.prompt.thought_loop.content}\n\n{agent.prompt.thought_loop.schema_content}"
         )
         
         # Add thought loop prompt to the end of the message list

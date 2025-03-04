@@ -14,7 +14,7 @@ from src.log_config import setup_logger
 from src.api_server.models.api_models import APIMessage
 from .prompt_library import PromptLibrary, PromptEntry
 
-
+ 
 class Agent:
     """Base class for all agent implementations.
     
@@ -56,7 +56,7 @@ class Agent:
         
         # Tool management
         self.tools: Dict[str, Dict[str, Any]] = {}
-        self.internal_tools: Dict[str, Any] = {}
+        self.internal_tools: Dict[str, Any] = {} #TODO: Remove this once tool refactor is complete
         
         # Conversation management
         self.conversations: Dict[str, List[Message]] = {}
@@ -92,10 +92,10 @@ class Agent:
     def get_prompt_schema(self, prompt_name: str) -> str | None:
         """Returns the schema for a given prompt name."""
         prompt_map = {
-            "xfer_long_term_prompt": self.prompt.xfer_long_term.schema,
-            "reflect_memories_prompt": self.prompt.reflect_memories.schema,
-            "self_improvement_prompt": self.prompt.self_improvement.schema,
-            "give_feedback_prompt": self.prompt.give_feedback.schema
+            "xfer_long_term_prompt": self.prompt.xfer_long_term.schema_content,
+            "reflect_memories_prompt": self.prompt.reflect_memories.schema_content,
+            "self_improvement_prompt": self.prompt.self_improvement.schema_content,
+            "give_feedback_prompt": self.prompt.give_feedback.schema_content
         }
         return prompt_map.get(prompt_name)
 

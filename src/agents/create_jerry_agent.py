@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from src.memetic_agent.memetic_agent import MemeticAgent
 from src.base_agent.config import AgentConfig
+from src.base_agent.type import Agent
 from chromadb import PersistentClient
 
 def create_jerry_agent(chroma_client: PersistentClient) -> MemeticAgent:

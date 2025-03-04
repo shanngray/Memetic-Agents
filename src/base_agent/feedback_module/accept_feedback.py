@@ -121,7 +121,7 @@ async def process_feedback_impl(agent: Agent, days_threshold: int = 0) -> None:
                         metadata=metadata
                     )
                     
-                    log_event(agent.logger, "agent.memorising",
+                    log_event(agent.logger, "feedback.memorised",
                                 f"Processed feedback {metadata['insight_id']} into long-term storage")
 
                     # Save to disk for debugging/backup

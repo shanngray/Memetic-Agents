@@ -7,7 +7,7 @@ class PromptEntry(BaseModel):
     name: str
     content: Optional[str] = None
     confidence: float = Field(default=0.0, ge=0.0, le=10.0)
-    schema: Optional[str] = None  # Schema content
+    schema_content: Optional[str] = None  # Schema content
     schema_path: Optional[Path] = None  # Path to schema file
     path: Optional[Path] = None
     category: Optional[str] = None
@@ -110,7 +110,7 @@ class PromptLibrary(BaseModel):
             give_feedback=PromptEntry(
                 name="give_feedback_prompt",
                 content=give_feedback_prompt,
-                schema=give_feedback_schema,
+                schema_content=give_feedback_schema,
                 schema_path=prompt_path / "schemas" / "give_feedback_schema.json",
                 path=prompt_path / "give_feedback_prompt.md",
                 category="give feedback",
@@ -125,7 +125,7 @@ class PromptLibrary(BaseModel):
             reflect_memories=PromptEntry(
                 name="reflect_memories_prompt",
                 content=reflect_memories_prompt,
-                schema=reflect_memories_schema,
+                schema_content=reflect_memories_schema,
                 schema_path=prompt_path / "schemas" / "reflect_memories_schema.json",
                 path=prompt_path / "reflect_memories_prompt.md",
                 confidence=0.0
@@ -133,7 +133,7 @@ class PromptLibrary(BaseModel):
             self_improvement=PromptEntry(
                 name="self_improvement_prompt",
                 content=self_improvement_prompt,
-                schema=self_improvement_schema,
+                schema_content=self_improvement_schema,
                 schema_path=prompt_path / "schemas" / "self_improvement_schema.json",
                 path=prompt_path / "self_improvement_prompt.md",
                 confidence=0.0
@@ -141,7 +141,7 @@ class PromptLibrary(BaseModel):
             thought_loop=PromptEntry(
                 name="thought_loop_prompt",
                 content=thought_loop_prompt,
-                schema=thought_loop_schema,
+                schema_content=thought_loop_schema,
                 schema_path=prompt_path / "schemas" / "thought_loop_schema.json",
                 path=prompt_path / "thought_loop_prompt.md",
                 confidence=0.0
@@ -149,7 +149,7 @@ class PromptLibrary(BaseModel):
             xfer_long_term=PromptEntry(
                 name="xfer_long_term_prompt",
                 content=xfer_long_term_prompt,
-                schema=xfer_long_term_schema,
+                schema_content=xfer_long_term_schema,
                 schema_path=prompt_path / "schemas" / "xfer_long_term_schema.json",
                 path=prompt_path / "xfer_long_term_prompt.md",
                 confidence=0.0

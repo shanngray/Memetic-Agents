@@ -96,7 +96,7 @@ async def learning_subroutine(agent: Agent, category: str = None) -> None:
             full_prompt = (
                 agent.prompt.self_improvement.content + 
                 "\n\nFormat your response as a simple JSON object with these fields:\n\n"
-                + agent.prompt.self_improvement.schema
+                + agent.prompt.self_improvement.schema_content
             )
             
             learning_opps = await agent.memory.retrieve(

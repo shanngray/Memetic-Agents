@@ -1,15 +1,18 @@
 import sys
 import json
 import re
+import os
 import inspect
+import logging
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import lru_cache
 import importlib
-from typing import Callable
+import signal
 from filelock import FileLock
 from chromadb import PersistentClient
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Callable, Union, Tuple
 import uuid
 import asyncio
 import httpx
@@ -17,11 +20,12 @@ import httpx
 sys.path.append(str(Path(__file__).parents[2]))
 
 from src.log_config import log_event, log_error
-from base_agent.base_agent import BaseAgent
-from base_agent.config import AgentConfig
-from base_agent.models import Message
-from base_agent.models import AgentStatus
+from src.base_agent.type import Agent
+from src.base_agent.config import AgentConfig
+from src.base_agent.models import Message
+from src.base_agent.models import AgentStatus
 from src.api_server.models.api_models import PromptModel, APIMessage, SocialMessage, PromptEvaluation
+from src.memory.memory_manager import MemoryManager
 from .modules.start_socialising_impl import start_socialising_impl
 from .modules.receive_message_impl import receive_message_impl
 from .modules.process_queue_impl import process_queue_impl
@@ -35,24 +39,61 @@ from .modules.start_sleeping_impl import _start_sleeping_impl
 from .modules.continue_or_stop_impl import continue_or_stop_impl
 from .modules.extract_learnings_impl import extract_learnings_impl
 from .modules.transfer_to_long_term_impl import transfer_to_long_term_impl
-
-class MemeticAgent(BaseAgent):
+from .modules.save_memory_impl import save_memory_impl
+from .modules.save_memory_to_disk_impl import save_memory_to_disk_impl
+from .modules.cleanup_memories_impl import cleanup_memories_impl
+from .modules.set_status_impl import set_status_impl
+from .modules.load_memory_impl import load_memory_impl
+from .modules.save_reflection_to_disk_impl import save_reflection_to_disk_impl
+from .modules.send_message_impl import send_message_impl
+from .modules.tool_functions import *
+from .modules.give_feedback import evaluate_and_send_feedback_impl, evaluate_response_impl
+from .modules.receive_feedback import receive_feedback_impl
+from .modules.search_memory_impl import search_memory_impl
+ 
+class MemeticAgent(Agent):
     def __init__(self, api_key: str, chroma_client: PersistentClient, config: AgentConfig = None):
         """Initialize MemeticAgent with reasoning capabilities."""
         # Initialize base collections first
         super().__init__(api_key=api_key, chroma_client=chroma_client, config=config)
-        
+
+        self._setup_logging()
+
+        # Log initialization with process/thread info
+        log_event(self.logger, "agent.init", 
+                 f"Initializing {self.__class__.__name__} (PID: {os.getpid()}, Thread: {threading.current_thread().name})")
+
+        # Set up core paths
         self.prompt_path = Path("agent_files") / self.config.agent_name / "prompt_modules"
         self.prompt_path.mkdir(parents=True, exist_ok=True)
-
-        # Create core directories
         self.scores_path = self.prompt_path / "scores"
         self.scores_path.mkdir(parents=True, exist_ok=True)
-
-        # Set up paths for schemas
         schema_path = self.prompt_path / "schemas"
         schema_path.mkdir(parents=True, exist_ok=True)
+
+        # Update paths but don't load content yet
+        self._setup_prompt_paths(schema_path)
         
+        # Add and register internal tools
+        self._setup_internal_tools()
+
+        # Initialize memory manager
+        self.memory = MemoryManager(
+            agent_name=self.config.agent_name,
+            logger=self.logger,
+            chroma_client=chroma_client
+        )
+
+        # Register shutdown handlers
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+
+        self._initialized = False
+
+        log_event(self.logger, "agent.init", f"Synchronis initilisation complete for {self.__class__.__name__}")
+
+    def _setup_prompt_paths(self, schema_path: Path) -> None:
+        """Set up paths for prompts and schemas."""
         # Update paths in PromptLibrary entries
         self.prompt.system.path = self.prompt_path / "sys_prompt.md"
         self.prompt.reasoning.path = self.prompt_path / "reasoning_prompt.md"
@@ -73,25 +114,29 @@ class MemeticAgent(BaseAgent):
         # Update path to confidence scores
         self._prompt_confidence_scores_path = self.scores_path / "prompt_confidence_scores.json"
 
-        #TODO System prompt is currently loaded via config ... this should be made consistent with the sub modules
+        log_event(self.logger, "agent.init", f"Prompt paths setup for {self.__class__.__name__}", level="DEBUG")
 
+    def _setup_internal_tools(self) -> None:
+        """Set up and register internal tools."""
+        self.internal_tools["send_message"] = self.send_message
+        self.internal_tools["search_memory"] = self.search_memory
+        self.internal_tools["update_prompt_module"] = self.update_prompt_module
+        for tool_name, tool_func in self.internal_tools.items():
+            register(self, tool_func)
 
-        # Add reasoning-related tool to internal_tools dictionary
-        self.internal_tools.update({
-            "update_prompt_module": self.update_prompt_module,
-            "update_system_prompt": self.update_system_prompt
-        })
-
-        # Register the new internal tools
-        for tool_name, tool_func in {
-            "update_prompt_module": self.update_prompt_module,
-            "update_system_prompt": self.update_system_prompt
-        }.items():
-            self.tool_mod.register(tool_func)
+        log_event(self.logger, "agent.init", f"Internal tools registered for {self.__class__.__name__}", level="DEBUG")
 
     async def initialize(self) -> None:
         """Async initialization to load all required files. Run from main.py"""
+        if self._initialized:
+            log_event(self.logger, "agent.init", f"Agent already initialised for {self.__class__.__name__}")
+            return
+
         try:
+            log_event(self.logger, "agent.init", "Starting async initialization")
+
+            #TODO System prompt is currently loaded via config ... this should be made consistent with the sub modules
+
             # Load all prompt contents
             self.prompt.reasoning.content = await self._load_module(self.prompt.reasoning.path)
             self.prompt.give_feedback.content = await self._load_module(self.prompt.give_feedback.path)
@@ -102,11 +147,11 @@ class MemeticAgent(BaseAgent):
             self.prompt.evaluator.content = await self._load_module(self.prompt.evaluator.path)
 
             # Load schemas
-            self.prompt.xfer_long_term.schema = await self._load_module(self.prompt.xfer_long_term.schema_path)
-            self.prompt.reflect_memories.schema = await self._load_module(self.prompt.reflect_memories.schema_path)
-            self.prompt.self_improvement.schema = await self._load_module(self.prompt.self_improvement.schema_path)
-            self.prompt.give_feedback.schema = await self._load_module(self.prompt.give_feedback.schema_path)
-            self.prompt.thought_loop.schema = await self._load_module(self.prompt.thought_loop.schema_path)
+            self.prompt.xfer_long_term.schema_content = await self._load_module(self.prompt.xfer_long_term.schema_path)
+            self.prompt.reflect_memories.schema_content = await self._load_module(self.prompt.reflect_memories.schema_path)
+            self.prompt.self_improvement.schema_content = await self._load_module(self.prompt.self_improvement.schema_path)
+            self.prompt.give_feedback.schema_content = await self._load_module(self.prompt.give_feedback.schema_path)
+            self.prompt.thought_loop.schema_content = await self._load_module(self.prompt.thought_loop.schema_path)
 
             #TODO: This could be cleaned up and made more efficient
             # Load confidence scores and update PromptEntries
@@ -121,11 +166,87 @@ class MemeticAgent(BaseAgent):
             
             # Initialize system prompts after all content is loaded
             self._initialize_system_prompts()
+
+            # Load enabled tools
+            if self.config.enabled_tools:
+                await load_tool_definitions(self)
             
-            self.logger.info("Agent initialization completed successfully")
+            self._initialized = True
+            log_event(self.logger, "agent.init", "Agent initialization completed successfully")
+            
         except Exception as e:
             self.logger.error(f"Failed to initialize agent: {str(e)}")
             raise
+
+    def _setup_logging(self) -> None:
+        """Configure logging if debug is enabled."""
+                # Initialize logger before any other operations
+        self.logger = setup_logger(
+            name=self.config.agent_name,
+            log_path=self.config.log_path,
+            level=self.config.log_level,
+            console_logging=self.config.console_logging
+        )
+        
+        if self.config.debug:
+            self.config.log_path.mkdir(exist_ok=True)
+            
+            # Only add handlers if none exist
+            if not self.logger.handlers:
+                # Always add file handler when debug is enabled
+                file_handler = logging.FileHandler(
+                    self.config.log_path / f'{self.config.agent_name.lower().replace(" ", "_")}_debug_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+                )
+                formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                file_handler.setFormatter(formatter)
+                self.logger.addHandler(file_handler)
+                
+                # Add console handler only if enabled
+                if self.config.console_logging:
+                    console_handler = logging.RichHandler()
+                    console_handler.setFormatter(formatter)
+                    self.logger.addHandler(console_handler)
+                    
+                self.logger.setLevel(logging.DEBUG)
+                
+            self.logger.info("MemticAgent initialised")
+
+        log_event(self.logger, "agent.registered", f"Initialized logging for \"{self.config.agent_name}\"")
+
+    async def start(self):
+        """Start the agent's main processing loop and initialise memories"""
+        if not self._initialized:
+            await self.initialize()
+            
+        self.logger.info(f"Starting {self.config.agent_name} processing loop")
+        
+        # Initialize and load memory collections
+        await self._initialize_and_load_memory_collections(
+            ["short_term", "long_term", "feedback", "reflections"]
+        )
+        
+        while not self._shutdown_event.is_set():
+            try:
+                await self.process_queue()
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                self.logger.error(f"Error in processing loop: {str(e)}")
+                if self.status != AgentStatus.SHUTTING_DOWN:
+                    await self.set_status(AgentStatus.AVAILABLE, "start")
+
+    async def _initialize_and_load_memory_collections(self, collections: List[str]):
+        """Initialize all required memory collections."""
+        
+        try:
+            await self.memory.initialize(collection_names=collections)
+            log_event(self.logger, "memory.installed", 
+                     f"Initialized base collections for {self.config.agent_name}")
+            
+            # Load existing memory
+            await self._load_memory()
+            
+        except Exception as e:
+            log_error(self.logger, f"Failed to initialize & load memory collections: {str(e)}")
 
     def _get_tool_descriptions(self) -> str:
         """Get formatted descriptions of all available tools."""
@@ -226,6 +347,7 @@ class MemeticAgent(BaseAgent):
             self.logger.error(f"Error loading confidence scores: {str(e)}")
             raise
 
+    #TODO: Remove this once tool refactoring is complete
     async def update_prompt_module(self, prompt_type: str, new_prompt: str) -> str:
         """Update a specific prompt module with backup functionality.
         
@@ -368,114 +490,42 @@ class MemeticAgent(BaseAgent):
                     content=system_prompt
                 ))
 
-    async def update_system_prompt(self, new_prompt: str) -> str:
-        """Update your system prompt when you want to modify your core behavior.
-        Use this tool to permanently change how you operate."""
-        lock = FileLock(f"{self.prompt.system.path}.lock")
-        with lock:
-            await asyncio.to_thread(self.prompt.system.path.write_text, new_prompt, encoding="utf-8")
-        return "System prompt updated successfully"
-
     async def set_status(self, new_status: AgentStatus, trigger: str) -> None:
         """Memetic Agent version of BaseAgent set_status includes learning from memory."""
-        try:
-            if new_status == self.status:
-                log_event(self.logger, "status.change", 
-                         f"Status unchanged - Current: /{self.status.name}, "
-                         f"New: {new_status.name}, Trigger: {trigger}")
-                return
+        return await set_status_impl(self, new_status, trigger)
 
-            valid_transitions = AgentStatus.get_valid_transitions(self.status)
-            
-            if new_status not in valid_transitions:
-                log_event(self.logger, "status.change", 
-                         f"Invalid status transition - Current: /{self.status.name}, "
-                         f"New: {new_status.name}, Trigger: {trigger}", level="ERROR")
-                raise ValueError(
-                    f"Invalid status transition from /{self.status.name} to /{new_status.name} caused by {trigger}"
-                )
-
-            # Store previous status before updating
-            previous_status = self.status
-            
-            # Update status
-            self.status = new_status
-            self._previous_status = previous_status
-            self._status_history.append({
-                "timestamp": datetime.now().isoformat(),
-                "from": previous_status,
-                "to": self.status,
-                "trigger": trigger
-            })
-            log_event(
-                self.logger,
-                f"agent.{self.status.name}",
-                f"Status changed: /{previous_status.name} -> /{self.status.name} ({trigger})"
-            )
-            
-            # Handle MEMORISING state tasks
-            if new_status == AgentStatus.MEMORISING and previous_status != AgentStatus.MEMORISING:
-                try:
-                    # Create tasks but store their references
-                    transfer_task = asyncio.create_task(self._transfer_to_long_term())
-                    learning_task = asyncio.create_task(self._extract_learnings())
-                    
-                    # Wait for both tasks to complete before cleanup
-                    await asyncio.gather(transfer_task, learning_task)
-                    
-                    # Now run cleanup
-                    clean_short_task = asyncio.create_task(self._cleanup_memories(days_threshold=0, collection_name="short_term"))
-                    clean_feedback_task = asyncio.create_task(self._cleanup_memories(days_threshold=0, collection_name="feedback"))
-                    await asyncio.gather(clean_short_task, clean_feedback_task)
-                finally:
-                    # Direct status update without recursive call
-                    if self.status != AgentStatus.SHUTTING_DOWN:
-                        self.status = previous_status
-                        log_event(
-                            self.logger,
-                            f"agent.{self.status.name}",
-                            f"Status restored: {AgentStatus.MEMORISING.name} -> {self.status.name} (Memory processing complete)"
-                        )
-
-            if new_status == AgentStatus.LEARNING:
-                try:
-                    await self._run_learning_subroutine()
-                    if self.status != AgentStatus.SHUTTING_DOWN:
-                        await self.set_status(AgentStatus.AVAILABLE, "Learning complete")
-                except Exception as e:
-                    self.logger.error(f"Learning failed: {str(e)}")
-                    if self.status != AgentStatus.SHUTTING_DOWN:
-                        await self.set_status(AgentStatus.AVAILABLE, "Learning failed")
-
-            if new_status == AgentStatus.SOCIALISING:
-                try:
-                    # Create task for socializing but don't await it
-                    asyncio.sleep(0.1)
-                    asyncio.create_task(self._start_socialising())
-                except Exception as e:
-                    self.logger.error(f"Failed to start socialising task: {str(e)}")
-                    if self.status != AgentStatus.SHUTTING_DOWN:
-                        await self.set_status(AgentStatus.AVAILABLE, "Failed to start socialising")
-                
-            if new_status == AgentStatus.SLEEPING:
-                try:
-                    # Create task for sleeping but don't await it
-                    asyncio.sleep(0.1)
-                    await self._start_sleeping()
-                    if self.status != AgentStatus.SHUTTING_DOWN:
-                        await self.set_status(AgentStatus.AVAILABLE, "Sleeping complete")
-                except Exception as e:
-                    self.logger.error(f"Failed to start sleeping task: {str(e)}")
-                    if self.status != AgentStatus.SHUTTING_DOWN:
-                        await self.set_status(AgentStatus.AVAILABLE, "Failed to start sleeping")
-        except Exception as e:
-            self.logger.error(f"Status update failed: {str(e)}")
+    async def send_message(self, receiver: str, content: str) -> Dict[str, Any]:
+        """Send a message via API to another agent registered in the directory service."""
+        return await send_message_impl(self, receiver, content)
 
     async def receive_message(self, message: APIMessage) -> str:
         return await receive_message_impl(self, message)
     
     async def receive_social_message(self, message: SocialMessage) -> str:
         return await receive_social_message_impl(self, message)
+
+    async def receive_feedback(
+        self,
+        sender: str,
+        conversation_id: str,
+        score: int,
+        feedback: str
+    ) -> None:
+        """Process and store received feedback from another agent."""
+        return await receive_feedback_impl(self, sender, conversation_id, score, feedback)
+
+    async def _load_memory(self) -> None:
+        """Load short term memories into conversations and list of long term memories into old_conversation_list."""
+        return await load_memory_impl(self)
+
+    async def search_memory(self, query: str, keywords: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Use to search your memory using a 'query' and (optional) 'keywords'.
+        
+        Args:
+            query: The search query string
+            keywords: Optional list of keywords to help filter results
+        """
+        return await search_memory_impl(self, query, keywords)
 
     async def _transfer_to_long_term(self, days_threshold: int = 0) -> None:
         """Transfer short-term memories into long-term storage as atomic memories with SPO metadata.
@@ -550,44 +600,20 @@ class MemeticAgent(BaseAgent):
 
     async def _save_reflection_to_disk(self, reflections: List[Dict], original_metadata: Dict) -> None:
         """Save learning reflections to disk for debugging/backup."""
-        try:
-            reflection_dump_path = self.files_path / f"{self.config.agent_name}_reflection_dump.md"
-            lock = FileLock(f"{reflection_dump_path}.lock")
-            
-            async with asyncio.Lock():  # Use asyncio.Lock() for async context
-                with lock:
-                    def write_reflections():
-                        with open(reflection_dump_path, "a", encoding="utf-8") as f:
-                            f.write(f"\n\n## Learning Reflections Generated {datetime.now().isoformat()}\n")
-                            f.write("### Original Memory Metadata\n")
-                            for key, value in original_metadata.items():
-                                f.write(f"{key}: {value}\n")
-                            
-                            f.write("\n### Extracted Learnings\n")
-                            for reflection in reflections:
-                                category = reflection.get('category', 'Uncategorized')
-                                importance = reflection.get('importance', 'N/A')
-                                lesson = reflection.get('lesson', 'No lesson recorded')
-                                thoughts = reflection.get('thoughts', 'No additional thoughts')
-                                
-                                f.write(f"\n#### {category.title()} (importance: {importance})\n")
-                                f.write(f"Lesson: {lesson}\n")
-                                f.write(f"Thoughts: {thoughts}\n")
-                            f.write("\n---\n")
-                    
-                    # Properly await the thread execution
-                    await asyncio.to_thread(write_reflections)
-            
-            log_event(self.logger, "reflection.dumped", 
-                     f"Saved {len(reflections)} learning reflections to disk",
-                     level="DEBUG")
-        except Exception as e:
-            log_error(self.logger, 
-                     f"Failed to save learning reflections to disk: {str(e)}")
+        return await save_reflection_to_disk_impl(self, reflections, original_metadata)
 
-    async def _process_feedback(self, days_threshold: int = 0) -> None:
-        """Process and transfer feedback to long-term memory."""
-        return await process_feedback_impl(self, days_threshold)
+    async def _evaluate_and_send_feedback(
+        self,
+        receiver: str,
+        conversation_id: str,
+        response_content: str
+    ) -> None:
+        """Evaluate response quality and send feedback to the agent."""
+        return await evaluate_and_send_feedback_impl(self, receiver, conversation_id, response_content)
+
+    async def _evaluate_response(self, response_content: str) -> Tuple[int, str]:
+        """Evaluate response quality using LLM."""
+        return await evaluate_response_impl(self, response_content)
 
     #TODO: Not tested and not currently in use.
     async def _cleanup_conversation(self, conversation_id: str, collection_name: str) -> None:
@@ -665,25 +691,6 @@ class MemeticAgent(BaseAgent):
             conversation_id=conversation_id
         )
 
-    async def start(self):
-        """Start the agent's main processing loop and initialise memories"""
-        self.logger.info(f"Starting {self.config.agent_name} processing loop")
-        
-        # Initialize and load memory collections before starting the processing loop
-        # Include memetic-specific collections
-        await self._initialize_and_load_memory_collections(
-            ["short_term", "long_term", "feedback", "reflections"]
-        )
-        
-        while not self._shutdown_event.is_set():
-            try:
-                await self.process_queue()
-                await asyncio.sleep(0.1)  # Prevent CPU spinning
-            except Exception as e:
-                self.logger.error(f"Error in processing loop: {str(e)}")
-                if self.status != AgentStatus.SHUTTING_DOWN:
-                    await self.set_status(AgentStatus.AVAILABLE, "start")
-
     async def _record_score(self, prompt_type: str, prompt_score: int, conversation_id: str, score_type: str) -> None:
         """Record a score for a prompt and update confidence scores when appropriate."""
         return await _record_score_impl(self, prompt_type, prompt_score, conversation_id, score_type)
@@ -715,7 +722,54 @@ class MemeticAgent(BaseAgent):
             "STOP" if conversation should end, or a rephrased continuation message
         """
         return await continue_or_stop_impl(self, messages)
+
+    async def _save_memory(self) -> None:
+        """Save new messages from conversations to memory store."""
+        return await save_memory_impl(self)
+
+    async def _save_memory_to_disk(self, structured_info: Dict, metadata: Dict, memory_type: str) -> None:  
+        """Save structured memory information to disk for debugging/backup."""
+        return await save_memory_to_disk_impl(self, structured_info, metadata, memory_type)
+
+    async def _cleanup_memories(self, days_threshold: int = 0, collection_name: str = "short_term") -> None:
+        """Clean up old memories from specified collection after consolidation.
         
+        Args:
+            days_threshold: Number of days worth of memories to keep.
+                            Memories older than this will be deleted.
+                            Default is 0 (clean up all processed memories).
+            collection_name: Name of collection to clean up.
+                            Default is "short_term".
+        """
+        return await cleanup_memories_impl(self, days_threshold, collection_name)
+
+    def _handle_shutdown(self, signum, frame) -> None:
+        """Handle shutdown signals gracefully by creating async task."""
+        self.logger.info("Shutdown signal received")
+        # Create async task for shutdown which includes memory saving
+        asyncio.create_task(self.shutdown())
+
+    async def shutdown(self) -> None:
+        """Gracefully shutdown the agent."""
+        await self.set_status(AgentStatus.SHUTTING_DOWN, "shutdown")
+        self._shutdown_event.set()
+        
+        self.logger.info(f"Shutting down {self.config.agent_name}")
+        # Save memory as part of shutdown
+        await self._save_memory()
+        
+        # Cancel any pending requests
+        for future in self.pending_requests.values():
+            if not future.done():
+                future.cancel()
+        
+        # Clear queues
+        while not self.request_queue.empty():
+            try:
+                self.request_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
 #TODO: The agent needs to be able to call up things like its architecture or curent prompts 
 # so that it can use them when reflecting on memories.
 

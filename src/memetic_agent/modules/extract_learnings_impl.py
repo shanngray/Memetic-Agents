@@ -80,7 +80,7 @@ async def extract_learnings_impl(agent: Agent, days_threshold: int = 0) -> None:
                     feedback_content = "\n".join(item["content"] for item in feedback_items)
                     combined_content += f"\n\nFeedback:\n{feedback_content}"
 
-                full_prompt = agent.prompt.reflect_memories.content + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + agent.prompt.reflect_memories.schema
+                full_prompt = agent.prompt.reflect_memories.content + "\n\nFormat your response as a JSON array of objects with the following schema:\n" + agent.prompt.reflect_memories.schema_content
 
                 # Extract learnings using LLM
                 reflection_response = await agent.client.chat.completions.create(
