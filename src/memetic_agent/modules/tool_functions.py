@@ -21,10 +21,10 @@ async def load_tool_definitions(agent: Agent) -> None:
             log_event(agent.logger, "tool.loading", f"Loading tool definition: {tool_path}", level="DEBUG")
             with open(tool_path) as f:
                 tool_def = json.load(f)
-                await register(agent, tool_def)
+                register(agent, tool_def)
                 
         except Exception as e:
-            log_event(agent.logger, "tool.error", f"Failed to load tool {tool_name}: {str(e)}", level="ERROR")
+            log_event(agent.logger, "tool.error", f"Failed to load tool definition for {tool_name}: {str(e)}", level="ERROR")
 
 def register(agent: Agent, tool: Union[Dict[str, Any], Callable]) -> None:
     """Register a new tool/function that the agent can use.
@@ -138,7 +138,7 @@ async def execute(agent: Agent, tool_call: ToolCall) -> Dict[str, Any]:
         log_event(agent.logger, "tool.loading", 
                     f"Loading tool implementation: {tool_name}", 
                     level="DEBUG")
-        tool_func = await agent.load(tool_name)
+        tool_func = await load(agent, tool_name)
         
         # Parse arguments
         try:

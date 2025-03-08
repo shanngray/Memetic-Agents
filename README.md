@@ -1,6 +1,6 @@
-# AI Agent Interaction System
+# Memetic Agents: A Framework for AI Agents That Learn Through Social Interaction
 
-A multi-agent system that enables collaborative problem-solving through specialized AI agents. The system features a directory service for agent discovery and communication, with persistent memory storage using ChromaDB.
+Memetic Agents is an innovative framework for creating AI agents capable of social learning and knowledge evolution. The framework implements a multi-tiered memory architecture (working, short-term, long-term), dynamic prompt modification, and inter-agent communication protocols. The system enables agents to maintain persistent knowledge, engage in meaningful interactions, and evolve their capabilities through social learning mechanisms inspired by memetic theory. Agents can reflect on their experiences, consolidate memories, and share knowledge with other agents, creating a network of continuously improving AI entities.
 
 ## Features
 
@@ -53,22 +53,28 @@ The system provides an interactive agent factory to create new agents. To create
    - Agent name
    - Description of agent's capabilities
    - Model selection (default: gpt-4-mini)
+   - Submodel selection (default: gpt-4o-mini)
+   - Prompt template selection (default: placeholder)
    - Console logging preference
    - API port number (must be unique)
    - Temperature setting (0.0-2.0)
    - Enabled tools selection
 
 The factory will:
+
 - Create a folder structure in `agent_files/<agent_name>/`
 - Set up prompt modules and configuration files
 - Generate an agent creation script in `src/agents/`
 
 Example agent creation:
+
 ```bash
 $ poetry run python src/utils/new_agent_factory.py
 ? What is the name of your agent? ResearchAgent
 ? Provide a brief description of your agent: Specialized in academic research and citation
 ? Which model should the agent use? gpt-4-mini
+? Which submodel should the agent use? gpt-4o-mini
+? Which prompt templates should the agent use? placeholder
 ? Enable console logging? True
 ? Which API port should the agent use? 8085
 ? Set the temperature (0.0-2.0) 0.7
@@ -80,20 +86,16 @@ $ poetry run python src/utils/new_agent_factory.py
 The system requires two terminals to run:
 
 1. Start the main system (directory service and agents):
+
    ```bash
    poetry run python src/main.py
    ```
 
 2. Launch the interaction interface:
+
    ```bash
    poetry run python src/live_interact.py
    ```
-
-## Available Agents
-
-- **MathAgent**: Mathematical expert for calculations and problem-solving
-- **TimeAgent**: Time and timezone specialist
-- **EditorAgent**: Expert editor for proofreading and editing blog posts
 
 ## Interactive Commands
 
@@ -115,8 +117,11 @@ The system requires two terminals to run:
 ## Memory Management
 
 The system uses ChromaDB for persistent storage with two types of memory:
+
 - Short-term memory: Recent interactions and temporary data
 - Long-term memory: Consolidated and processed information
+- Feedback memory: Feedback from other agents
+- Reflections: Internal thoughts and evaluations
 
 ## Development
 

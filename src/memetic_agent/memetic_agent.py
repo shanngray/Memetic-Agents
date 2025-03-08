@@ -135,9 +135,8 @@ class MemeticAgent(Agent):
         try:
             log_event(self.logger, "agent.init", "Starting async initialization")
 
-            #TODO System prompt is currently loaded via config ... this should be made consistent with the sub modules
-
             # Load all prompt contents
+            self.prompt.system.content = await self._load_module(self.prompt.system.path)
             self.prompt.reasoning.content = await self._load_module(self.prompt.reasoning.path)
             self.prompt.give_feedback.content = await self._load_module(self.prompt.give_feedback.path)
             self.prompt.thought_loop.content = await self._load_module(self.prompt.thought_loop.path)
@@ -164,13 +163,13 @@ class MemeticAgent(Agent):
             self.prompt.reflect_memories.confidence = scores.get("reflect_memories", 0.0)
             self.prompt.evaluator.confidence = scores.get("evaluator", 0.0)
             
-            # Initialize system prompts after all content is loaded
-            self._initialize_system_prompts()
-
             # Load enabled tools
             if self.config.enabled_tools:
                 await load_tool_definitions(self)
             
+            # Initialize system prompts after all content is loaded
+            self._initialize_system_prompts()
+
             self._initialized = True
             log_event(self.logger, "agent.init", "Agent initialization completed successfully")
             
@@ -252,28 +251,65 @@ class MemeticAgent(Agent):
         """Get formatted descriptions of all available tools."""
         tool_descriptions = []
         
+        def _extract_description_from_tool(tool_name, tool_path=None, tool_func=None):
+            """Helper function to extract description from a tool."""
+            # First check if the tool is already loaded in tools dictionary
+            if tool_name in self.tools:
+                tool_def = self.tools[tool_name]
+                if "function" in tool_def:
+                    return tool_def["function"].get("description", "No description available")
+            
+            # If not loaded or no description in loaded definition, check for JSON schema file
+            if tool_path is None:
+                tool_path = self.config.tools_path / f"{tool_name}.json"
+                
+            if tool_path.exists():
+                try:
+                    with open(tool_path, 'r', encoding='utf-8') as f:
+                        tool_def = json.load(f)
+                    
+                    if tool_def.get("type") == "function" and "function" in tool_def:
+                        return tool_def["function"].get("description", "No description available")
+                    else:
+                        self.logger.warning(f"Invalid schema format for tool {tool_name}: missing 'function' field or incorrect type")
+                except Exception as e:
+                    self.logger.error(f"Error reading schema for {tool_name}: {str(e)}")
+            else:
+                # Only log a warning if we don't have a function to fall back to
+                if tool_func is None:
+                    self.logger.warning(f"Tool schema not found for {tool_name}: {tool_path}")
+            
+            # Fall back to docstring if tool_func is provided
+            if tool_func is not None:
+                try:
+                    doc = (inspect.getdoc(tool_func) or "").split("\n")[0]
+                    if doc:
+                        return doc
+                    else:
+                        self.logger.warning(f"No docstring found for internal tool {tool_name}")
+                except Exception as e:
+                    self.logger.error(f"Error extracting docstring for {tool_name}: {str(e)}")
+            
+            return "No description available"
+        
+        # Process enabled external tools
         for tool_name in self.config.enabled_tools:
             try:
-                # Import the tool module
-                if str(self.config.tools_path) not in sys.path:
-                    sys.path.append(str(self.config.tools_path))
-                    
-                module = importlib.import_module(tool_name)
-                
-                # Get the main function's docstring
-                main_func = getattr(module, tool_name)
-                description = main_func.__doc__ or "No description available"
-                
+                description = _extract_description_from_tool(tool_name)
                 tool_descriptions.append(f"- {tool_name}: {description.strip()}\n")
-                
             except Exception as e:
                 self.logger.error(f"Error loading tool description for {tool_name}: {str(e)}")
                 continue
-
+        
+        # Process internal tools
         for tool_name, tool_func in self.internal_tools.items():
-            doc = (inspect.getdoc(tool_func) or "").split("\n")[0]
-            tool_descriptions.append(f"- {tool_name}: {doc.strip()}\n")
-
+            try:
+                description = _extract_description_from_tool(tool_name, tool_func=tool_func)
+                tool_descriptions.append(f"- {tool_name}: {description.strip()}\n")
+            except Exception as e:
+                self.logger.error(f"Error loading description for internal tool {tool_name}: {str(e)}")
+                tool_descriptions.append(f"- {tool_name}: No description available\n")
+            
         return "\n".join(tool_descriptions)
 
     async def _load_module(self, module_path: Path) -> str:

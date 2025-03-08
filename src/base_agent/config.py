@@ -8,7 +8,6 @@ class AgentConfig(BaseModel):
     
     Attributes:
         model: The OpenAI model to use
-        system_prompt: Default system prompt
         max_history: Maximum number of messages to keep in history
         debug: Enable debug logging
         tools_path: Path to tools directory
@@ -27,7 +26,6 @@ class AgentConfig(BaseModel):
     model: str = "gpt-4o-mini"
     submodel: str = "gpt-4o-mini"
     temperature: float = 0.8
-    system_prompt: str = "You are a helpful AI assistant."
     max_history: int = 100
     debug: bool = False
     console_logging: bool = False

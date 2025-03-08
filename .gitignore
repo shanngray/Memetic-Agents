@@ -67,25 +67,9 @@ build/
 poetry.lock
 .cursorignore
 .cursorrules
-.cursorrules_old
-src/base_agent/old_base_agent.py
 src/test/class_logic.py
-.cursorrules_20250112
-.cursorrules_20250113
-docs/FAQ.md
-docs/memetic-agents-article 1.md
-docs/memetic-agents-article copy.md
-docs/memetic-agents-new.md
-docs/memetic-agents-research-paper.md
-docs/prompt-confidence-scoring.md
-.cursorrules_prof
-.cursor/rules/first-rule.mdc
-src/agents/create_curio_agent.py
-src/agents/create_franken_agent.py
-src/agents/create_reschel_agent.py
-src/agents/create_socraryny_agent.py
-src/agents/create_anna_agent.py
+.cursor/rules/
 src/agents/store/
-docs/social-sequence-flow.md
-src/agents/store/create_anna_agent.py
-docs/memetic-agents-appendix.md
+image_prompts/
+src/agents/create_jerry_agent.py
+src/agents/create_tom_agent.py

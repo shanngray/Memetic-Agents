@@ -11,7 +11,6 @@ def create_name_agent(chroma_client: PersistentClient) -> BaseAgent:
         console_logging=False,
         model="gpt-4o-mini",
         submodel="gpt-4o-mini",
-        system_prompt="""enter system prompt here""",
         agent_name="NameAgent",
         description="description of agent",
         enabled_tools=["agent_search", "list_agents"],

@@ -1,7 +1,6 @@
 from typing import Any, Dict, List
 from src.log_config import log_event, log_error, log_agent_message
 from src.base_agent.models import Message, ToolCall, AgentStatus
-from src.base_agent.tool_manager import ToolError
 import asyncio
 import uuid
 from datetime import datetime
@@ -9,6 +8,7 @@ import json
 import asyncio
 from src.base_agent.type import Agent
 from src.api_server.models.api_models import PromptModel
+from src.memetic_agent.modules import tool_functions  # Import the tool_functions module
 
 async def process_message_impl(agent: Agent, content: str, sender: str, conversation_id: str) -> str:
     """Memetic Agent version of process_message_impl"""
@@ -137,7 +137,7 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                     for tool_call in tool_calls:
                         tool_iteration_count += 1
                         try:
-                            tool_result = await agent.tool_mod.execute(tool_call)
+                            tool_result = await tool_functions.execute(agent, tool_call)
                             tool_message = Message(
                                 role="tool",
                                 content=json.dumps(tool_result),
@@ -145,7 +145,8 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                                 timestamp=datetime.now().isoformat(),
                                 tool_calls=None,
                                 sender=tool_call.function['name'],
-                                receiver=agent.config.agent_name
+                                receiver=agent.config.agent_name,
+                                name=None
                             )
 
                             log_event(agent.logger, "tool.result", 
@@ -159,7 +160,7 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                             log_event(agent.logger, "tool.result", 
                                         f"Added tool result for {tool_call.function['name']}")
                             
-                        except ToolError as e:
+                        except Exception as e:
                             error_message = Message(
                                 role="tool",
                                 content=json.dumps({"error": str(e)}),
@@ -167,8 +168,8 @@ async def process_message_impl(agent: Agent, content: str, sender: str, conversa
                                 timestamp=datetime.now().isoformat(),
                                 name=None,
                                 tool_calls=None,
-                                sender=agent.config.agent_name,
-                                receiver=sender
+                                sender=tool_call.function['name'],
+                                receiver=agent.config.agent_name
                             )
                             messages.append(error_message)
                             log_error(agent.logger, 

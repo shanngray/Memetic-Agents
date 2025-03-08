@@ -118,17 +118,12 @@ from chromadb import PersistentClient
 def create_{config_data["agent_name"].lower()}_agent(chroma_client: PersistentClient) -> MemeticAgent:
     """Create an MemeticAgent instance."""
     
-    # Load system prompt from file
-    system_prompt_path = Path("agent_files/{config_data["agent_name"]}/prompt_modules/sys_prompt.md")
-    system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
-    
     config = AgentConfig(
         debug=os.getenv("AGENT_DEBUG", "false").lower() == "true",
         console_logging={config_data["console_logging"]},
         model="{config_data["model"]}",
         submodel="{config_data["submodel"]}",
         temperature={config_data["temperature"]},
-        system_prompt=system_prompt,
         agent_name="{config_data["agent_name"]}",
         description="{config_data["description"]}",
         enabled_tools={config_data["enabled_tools"]},

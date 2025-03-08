@@ -8,7 +8,6 @@ import httpx
 
 from src.log_config import log_event, log_error, log_agent_message
 from src.base_agent.models import Message, ToolCall, AgentStatus
-from src.base_agent.tool_manager import ToolError
 from src.base_agent.type import Agent
 from src.api_server.models.api_models import PromptModel, PromptEvaluation, SocialMessage
 from src.memetic_agent.modules.normalise_score import normalise_score
@@ -40,6 +39,10 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
 
             first_agent = sender
             second_agent = agent.config.agent_name
+            
+            # Validate prompt is not None
+            if prompt is None:
+                raise ValueError("Prompt cannot be None for InitialPrompt message type")
             
             #The first agent's intial prompt
             first_agent_prompt = prompt.prompt
@@ -118,6 +121,12 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             second_agent = sender
             first_agent = agent.config.agent_name
 
+            # Validate prompt and evaluation are not None
+            if prompt is None:
+                raise ValueError("Prompt cannot be None for EvalResponse message type")
+            if evaluation is None:
+                raise ValueError("Evaluation cannot be None for EvalResponse message type")
+            
             # Second_Agent's Initial Prompt
             second_agent_prompt = prompt.prompt
             
@@ -239,6 +248,12 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             first_agent = sender
             second_agent = agent.config.agent_name
 
+            # Validate prompt and evaluation are not None
+            if prompt is None:
+                raise ValueError("Prompt cannot be None for PromptUpdate message type")
+            if evaluation is None:
+                raise ValueError("Evaluation cannot be None for PromptUpdate message type")
+                
             first_agent_updated_prompt = prompt.prompt
             prompt_type = prompt.prompt_type
 
@@ -357,6 +372,12 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             second_agent = sender
             first_agent = agent.config.agent_name
 
+            # Validate prompt and evaluation are not None
+            if prompt is None:
+                raise ValueError("Prompt cannot be None for UpdateResponse message type")
+            if evaluation is None:
+                raise ValueError("Evaluation cannot be None for UpdateResponse message type")
+                
             # Receiver's Updated Prompt
             updated_prompt = prompt.prompt
             prompt_type = prompt.prompt_type
@@ -430,6 +451,10 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
             first_agent = sender
             second_agent = agent.config.agent_name
 
+            # Validate evaluation is not None
+            if evaluation is None:
+                raise ValueError("Evaluation cannot be None for FinalEval message type")
+                
             updated_evaluation = evaluation.evaluation
             updated_score = evaluation.score
             prompt_type = evaluation.prompt_type
@@ -466,18 +491,30 @@ async def process_social_message_impl(agent: Agent, content: str, sender: str, p
 async def evaluate_prompt(agent: Agent, social_system_prompt: str, social_message: str, message_type: str) -> dict:
     """Evaluate the prompt based on the social message"""
     try:
+        # Prepare messages for the API call
+        messages = [
+            {"role": "system", "content": social_system_prompt},
+            {"role": "user", "content": social_message}
+        ]
+        
+        # Prepare additional parameters based on model
+        params = {
+            "model": agent.config.model,
+            "messages": messages,
+            "response_format": {"type": "json_object"}
+        }
+        
+        # Add temperature for non-o1/o3-mini models
+        if agent.config.model not in ["o1-mini", "o3-mini"]:
+            params["temperature"] = agent.config.temperature
+            
+        # Add reasoning_effort for o3-mini model
+        if agent.config.model == "o3-mini":
+            params["reasoning_effort"] = agent.config.reasoning_effort
+
+        # Make the API call with timeout
         response = await asyncio.wait_for(
-            agent.client.chat.completions.create(
-                model=agent.config.model,
-                **({"temperature": agent.config.temperature} if agent.config.model not in ["o1-mini", "o3-mini"] else {}),
-                messages=[
-                    {"role": "system", "content": social_system_prompt},
-                    {"role": "user", "content": social_message}
-                ],
-                timeout=3000,
-                response_format={ "type": "json_object" },
-                **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
-            ),
+            agent.client.chat.completions.create(**params),
             timeout=3050
         )
 
@@ -508,19 +545,30 @@ async def evaluate_prompt(agent: Agent, social_system_prompt: str, social_messag
 async def update_prompt(agent: Agent, social_system_prompt: str, social_message: str) -> dict:
     """Update the prompt based on the social message"""
     try:
+        # Prepare messages for the API call
+        messages = [
+            {"role": "system", "content": social_system_prompt},
+            {"role": "user", "content": social_message}
+        ]
+        
+        # Prepare additional parameters based on model
+        params = {
+            "model": agent.config.model,
+            "messages": messages,
+            "response_format": {"type": "json_object"}
+        }
+        
+        # Add temperature for non-o1/o3-mini models
+        if agent.config.model not in ["o1-mini", "o3-mini"]:
+            params["temperature"] = agent.config.temperature
+            
+        # Add reasoning_effort for o3-mini model
+        if agent.config.model == "o3-mini":
+            params["reasoning_effort"] = agent.config.reasoning_effort
 
+        # Make the API call with timeout
         response = await asyncio.wait_for(
-            agent.client.chat.completions.create(
-                model=agent.config.model,
-                **({"temperature": agent.config.temperature} if agent.config.model not in ["o1-mini", "o3-mini"] else {}),
-                messages=[
-                    {"role": "system", "content": social_system_prompt},
-                    {"role": "user", "content": social_message}
-                ],
-                timeout=3000,
-                response_format={ "type": "json_object" },
-                **({"reasoning_effort": agent.config.reasoning_effort} if agent.config.model == "o3-mini" else {})
-            ),
+            agent.client.chat.completions.create(**params),
             timeout=3050
         )
 
