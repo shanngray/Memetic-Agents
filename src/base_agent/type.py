@@ -7,6 +7,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 from chromadb import PersistentClient
+from openai.agents import Runner
 
 from .models import Message, AgentStatus
 from .config import AgentConfig
@@ -37,6 +38,7 @@ class Agent:
         """
         self.config = config or AgentConfig()
         self.client = AsyncOpenAI(api_key=api_key)
+        self.runner = Runner()
         self.logger = setup_logger(self.config.agent_name)
 
         # Core state attributes
